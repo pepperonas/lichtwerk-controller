@@ -1,0 +1,60 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+venv/
+env/
+ENV/
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+logs/
+*.pid
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Dependencies
+node_modules/
+
+# Build outputs
+build/
+dist/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+
+# PM2
+ecosystem.config.js.backup
+
+# Hardware specific
+*.bin
+*.hex
+
+# Local configuration
+config.local.*
+.env.local

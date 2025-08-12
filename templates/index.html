@@ -1,0 +1,796 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- Primary Meta Tags -->
+    <title>Lichtwerk Controller v2.0 - WS2812B LED Steuerung</title>
+    <meta name="title" content="Lichtwerk Controller v2.0 - WS2812B LED Steuerung">
+    
+    <!-- Icons with cache busting -->
+    <link rel="shortcut icon" href="/favicon.ico?v=2025081201" type="image/x-icon">
+    <link rel="icon" href="/favicon.ico?v=2025081201" type="image/x-icon">
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png?v=2025081201">
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png?v=2025081201">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2025081201">
+    <link rel="icon" type="image/png" sizes="192x192" href="/android-chrome-192x192.png">
+    <link rel="icon" type="image/png" sizes="512x512" href="/android-chrome-512x512.png">
+    <link rel="manifest" href="/manifest.json">
+    <meta name="description" content="Moderne Web-App zur Kontrolle von 600 WS2812B LEDs. 10 Effekte, Color Picker, Brightness Control und mehr via Raspberry Pi.">
+    <meta name="keywords" content="LED, WS2812B, Controller, Raspberry Pi, RGB, Effekte, Lichtsteuerung, Arduino">
+    <meta name="author" content="Lichtwerk Control App">
+    <meta name="robots" content="index, follow">
+    <meta name="language" content="German">
+    <meta name="revisit-after" content="7 days">
+
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="http://localhost:5002/">
+    <meta property="og:title" content="🎨 Lichtwerk Controller v2.0 - WS2812B LED Steuerung">
+    <meta property="og:description" content="Moderne Web-App zur Kontrolle von 600 WS2812B LEDs mit Effekten und Color Picker.">
+    <meta property="og:site_name" content="Lichtwerk Control">
+    <meta property="og:locale" content="de_DE">
+    
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="🎨 Lichtwerk Controller v2.0 - WS2812B LED Steuerung">
+    <meta name="twitter:description" content="Moderne Web-App zur Kontrolle von 600 WS2812B LEDs mit Effekten und Color Picker.">
+    
+    <!-- Technical Meta Tags -->
+    <meta name="application-name" content="Lichtwerk Control">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Lichtwerk Control">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="theme-color" content="#2B2E3B">
+    <meta name="color-scheme" content="dark">
+    
+    <!-- Samsung Browser & Android specific -->
+    <meta name="msapplication-TileColor" content="#2B2E3B">
+    <meta name="msapplication-TileImage" content="/apple-touch-icon.png">
+    <meta name="msapplication-square70x70logo" content="/apple-touch-icon.png">
+    <meta name="msapplication-square150x150logo" content="/apple-touch-icon.png">
+    <meta name="msapplication-square310x310logo" content="/apple-touch-icon.png">
+    
+    <!-- Additional Android Chrome meta tags -->
+    <meta name="mobile-web-app-title" content="Lichtwerk Control">
+    <meta name="mobile-web-app-status-bar-style" content="black-translucent">
+
+    <style>
+        :root {
+            /* Farbschema */
+            --background-dark: #2B2E3B;
+            --background-darker: #252830;
+            --card-background: #343845;
+            --accent-blue: #688db1;
+            --accent-green: #9cb68f;
+            --accent-red: #e16162;
+            --accent-orange: #e4a853;
+            --text-primary: #d1d5db;
+            --text-secondary: #9ca3af;
+
+            /* Schatten */
+            --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.25);
+            --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.15);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -2px rgba(0, 0, 0, 0.15);
+
+            /* Abstände */
+            --spacing-1: 0.25rem;
+            --spacing-2: 0.5rem;
+            --spacing-3: 0.75rem;
+            --spacing-4: 1rem;
+            --spacing-6: 1.5rem;
+            --spacing-8: 2rem;
+            --spacing-12: 3rem;
+            --spacing-16: 4rem;
+
+            /* Rundungen */
+            --radius-sm: 0.25rem;
+            --radius: 0.5rem;
+            --radius-lg: 0.75rem;
+            --radius-xl: 1rem;
+
+            /* Typografie */
+            --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: var(--font-family);
+            background-color: var(--background-dark);
+            color: var(--text-primary);
+            min-height: 100vh;
+            line-height: 1.6;
+        }
+        
+        .header {
+            background-color: var(--background-darker);
+            padding: var(--spacing-6);
+            box-shadow: var(--shadow);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .header h1 {
+            font-size: 1.875rem;
+            font-weight: 700;
+            text-align: center;
+            color: var(--text-primary);
+            margin-bottom: var(--spacing-2);
+        }
+
+        .header p {
+            text-align: center;
+            color: var(--text-secondary);
+            margin-top: var(--spacing-2);
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: var(--spacing-6);
+        }
+        
+        .card {
+            background-color: var(--card-background);
+            border-radius: var(--radius-xl);
+            padding: var(--spacing-6);
+            margin-bottom: var(--spacing-6);
+            box-shadow: var(--shadow);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .card h2, .card h3 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: var(--spacing-4);
+            color: var(--accent-blue);
+            text-align: center;
+        }
+
+        .status-card {
+            background-color: var(--card-background);
+            padding: var(--spacing-6);
+            border-radius: var(--radius-xl);
+            margin-bottom: var(--spacing-6);
+            box-shadow: var(--shadow);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .status-card.connected {
+            border-left: 5px solid var(--accent-green);
+        }
+        
+        .status-card.disconnected {
+            border-left: 5px solid var(--accent-red);
+        }
+        
+        .controls-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: var(--spacing-4);
+        }
+        
+        .control-card {
+            background-color: var(--card-background);
+            padding: var(--spacing-6);
+            border-radius: var(--radius-xl);
+            box-shadow: var(--shadow);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            transition: transform 0.2s ease;
+        }
+        
+        .control-card:hover {
+            transform: translateY(-2px);
+        }
+        
+        .control-card h3 {
+            margin-bottom: var(--spacing-4);
+            font-size: 1.3em;
+            color: var(--accent-blue);
+        }
+        
+        .power-button {
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            border: 4px solid var(--text-secondary);
+            background: var(--background-darker);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
+            margin: 0 auto var(--spacing-4);
+            position: relative;
+            box-shadow: var(--shadow-lg);
+            font-size: 18px;
+            font-weight: bold;
+            color: var(--text-primary);
+        }
+        
+        .power-button.on {
+            border-color: var(--accent-green);
+            background: rgba(156, 182, 143, 0.2);
+            box-shadow: 0 0 40px rgba(156, 182, 143, 0.6);
+            color: var(--accent-green);
+        }
+        
+        .power-button.off {
+            border-color: var(--text-secondary);
+            background: var(--background-darker);
+            color: var(--text-secondary);
+        }
+        
+        .power-button:hover {
+            transform: scale(1.05);
+            box-shadow: var(--shadow-lg);
+        }
+        
+        .color-grid {
+            display: grid;
+            grid-template-columns: repeat(6, 1fr);
+            gap: var(--spacing-2);
+            margin: var(--spacing-4) 0;
+        }
+        
+        .color-field {
+            width: 50px;
+            height: 50px;
+            border-radius: var(--radius);
+            cursor: pointer;
+            border: 3px solid transparent;
+            transition: all 0.2s ease;
+            box-shadow: var(--shadow);
+        }
+        
+        .color-field:hover {
+            transform: scale(1.1);
+            box-shadow: var(--shadow-lg);
+        }
+        
+        .color-field.active {
+            border-color: var(--accent-blue);
+            box-shadow: 0 0 20px rgba(104, 141, 177, 0.6);
+        }
+        
+        .color-preview {
+            width: 100%;
+            height: 60px;
+            border-radius: var(--radius);
+            margin: var(--spacing-4) 0;
+            border: 2px solid rgba(255,255,255,0.3);
+            transition: all 0.3s ease;
+        }
+        
+        .slider-container {
+            margin: var(--spacing-4) 0;
+        }
+        
+        .slider-container label {
+            display: block;
+            margin-bottom: var(--spacing-2);
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+        
+        .slider {
+            width: 100%;
+            height: 8px;
+            border-radius: var(--radius-sm);
+            background: rgba(255,255,255,0.2);
+            outline: none;
+            -webkit-appearance: none;
+            cursor: pointer;
+        }
+        
+        .slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: var(--accent-blue);
+            cursor: pointer;
+            box-shadow: var(--shadow);
+            transition: all 0.2s ease;
+        }
+        
+        .slider::-webkit-slider-thumb:hover {
+            transform: scale(1.2);
+            background: var(--accent-green);
+        }
+        
+        .effects-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: var(--spacing-2);
+            margin-top: var(--spacing-4);
+        }
+        
+        .effect-button {
+            padding: var(--spacing-4) var(--spacing-2);
+            border: none;
+            border-radius: var(--radius);
+            background: var(--background-darker);
+            color: var(--text-primary);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-size: 0.9em;
+            text-align: center;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .effect-button:hover {
+            background: rgba(255,255,255,0.1);
+            transform: translateY(-2px);
+        }
+        
+        .effect-button.active {
+            background: var(--accent-blue);
+            box-shadow: 0 4px 15px rgba(104, 141, 177, 0.3);
+            color: white;
+        }
+        
+        .rgb-inputs {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: var(--spacing-2);
+            margin-top: var(--spacing-4);
+        }
+        
+        .rgb-input {
+            text-align: center;
+        }
+        
+        .rgb-input label {
+            display: block;
+            margin-bottom: var(--spacing-1);
+            font-size: 0.9em;
+            color: var(--text-secondary);
+        }
+        
+        .rgb-input input {
+            width: 100%;
+            padding: var(--spacing-2);
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: var(--radius);
+            background: var(--background-darker);
+            color: var(--text-primary);
+            text-align: center;
+        }
+        
+        .rgb-input input:focus {
+            outline: none;
+            border-color: var(--accent-blue);
+        }
+        
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-left: var(--spacing-2);
+            animation: pulse 2s infinite;
+        }
+        
+        .status-indicator.online {
+            background: var(--accent-green);
+        }
+        
+        .status-indicator.offline {
+            background: var(--accent-red);
+        }
+        
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+        
+        @media (max-width: 768px) {
+            .container {
+                padding: var(--spacing-2);
+                max-width: 100%;
+            }
+
+            .controls-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .header h1 {
+                font-size: 1.5rem;
+            }
+
+            .power-button {
+                width: 100px;
+                height: 100px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <h1>🎨 Lichtwerk Controller v2.0</h1>
+        <p>Modern LED Control | 600 WS2812B | 10 Effects | Color Picker</p>
+    </header>
+
+    <div class="container">
+        
+        <!-- Status -->
+        <div id="statusCard" class="status-card disconnected">
+            <h3>
+                Status: <span id="connectionStatus">Connecting...</span>
+                <span id="statusIndicator" class="status-indicator offline"></span>
+            </h3>
+            <p>Arduino: <span id="arduinoPort">-</span></p>
+            <p>LEDs: <span id="ledState">-</span> | Brightness: <span id="currentBrightness">-</span></p>
+            <p>Effect: <span id="currentEffect">-</span> | Speed: <span id="currentSpeed">-</span></p>
+        </div>
+        
+        <!-- Controls -->
+        <div class="controls-grid">
+            <!-- Power Control -->
+            <div class="control-card">
+                <h3>⚡ Power Control</h3>
+                <button id="powerButton" class="power-button off" onclick="togglePower()">
+                    OFF
+                </button>
+            </div>
+            
+            <!-- Color Control -->
+            <div class="control-card">
+                <h3>🎨 Color Control</h3>
+                <div class="color-grid" id="colorGrid">
+                    <!-- Color fields will be populated by JavaScript -->
+                </div>
+                <div class="color-preview" id="colorPreview"></div>
+                
+                <div class="rgb-inputs">
+                    <div class="rgb-input">
+                        <label>Red</label>
+                        <input type="number" id="colorR" min="0" max="255" value="255" onchange="updateColorFromRGB()">
+                    </div>
+                    <div class="rgb-input">
+                        <label>Green</label>
+                        <input type="number" id="colorG" min="0" max="255" value="255" onchange="updateColorFromRGB()">
+                    </div>
+                    <div class="rgb-input">
+                        <label>Blue</label>
+                        <input type="number" id="colorB" min="0" max="255" value="255" onchange="updateColorFromRGB()">
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Brightness Control -->
+            <div class="control-card">
+                <h3>💡 Brightness</h3>
+                <div class="slider-container">
+                    <label>Brightness: <span id="brightnessValue">120</span></label>
+                    <input type="range" id="brightnessSlider" class="slider" 
+                           min="0" max="255" value="120" 
+                           oninput="updateBrightness(this.value)">
+                </div>
+            </div>
+            
+            <!-- Effect Controls -->
+            <div class="control-card">
+                <h3>✨ Effects</h3>
+                <div class="slider-container">
+                    <label>Speed: <span id="speedValue">50</span></label>
+                    <input type="range" id="speedSlider" class="slider" 
+                           min="0" max="100" value="50" 
+                           oninput="updateSpeed(this.value)">
+                </div>
+                <div class="slider-container">
+                    <label>Intensity: <span id="intensityValue">255</span></label>
+                    <input type="range" id="intensitySlider" class="slider" 
+                           min="0" max="255" value="255" 
+                           oninput="updateIntensity(this.value)">
+                </div>
+            </div>
+        </div>
+        
+        <!-- Effects Grid -->
+        <div class="card">
+            <h3>🎭 Effect Gallery</h3>
+            <div class="effects-grid" id="effectsGrid">
+                <!-- Effects will be populated by JavaScript -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global state
+        let currentState = {
+            power: false,
+            brightness: 120,
+            color: {r: 255, g: 255, b: 255},
+            effect: 0,
+            speed: 50,
+            intensity: 255
+        };
+        
+        const effectNames = {{ effect_names | tojson }};
+        
+        // Predefined colors
+        const predefinedColors = [
+            {name: 'White', r: 255, g: 255, b: 255},
+            {name: 'Red', r: 255, g: 0, b: 0},
+            {name: 'Green', r: 0, g: 255, b: 0},
+            {name: 'Blue', r: 0, g: 0, b: 255},
+            {name: 'Yellow', r: 255, g: 255, b: 0},
+            {name: 'Cyan', r: 0, g: 255, b: 255},
+            {name: 'Magenta', r: 255, g: 0, b: 255},
+            {name: 'Orange', r: 255, g: 165, b: 0},
+            {name: 'Purple', r: 128, g: 0, b: 128},
+            {name: 'Pink', r: 255, g: 192, b: 203},
+            {name: 'Lime', r: 50, g: 205, b: 50},
+            {name: 'Violet', r: 138, g: 43, b: 226},
+            {name: 'Gold', r: 255, g: 215, b: 0},
+            {name: 'Teal', r: 0, g: 128, b: 128},
+            {name: 'Coral', r: 255, g: 127, b: 80},
+            {name: 'Indigo', r: 75, g: 0, b: 130},
+            {name: 'Crimson', r: 220, g: 20, b: 60},
+            {name: 'Turquoise', r: 64, g: 224, b: 208}
+        ];
+        
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeEffectsGrid();
+            initializeColorGrid();
+            updateColorPreview();
+            setInterval(updateStatus, 1000);
+            updateStatus();
+        });
+        
+        // Initialize effects grid
+        function initializeEffectsGrid() {
+            const grid = document.getElementById('effectsGrid');
+            effectNames.forEach((name, index) => {
+                const button = document.createElement('button');
+                button.className = 'effect-button';
+                button.textContent = name;
+                button.onclick = () => setEffect(index);
+                button.id = `effect-${index}`;
+                grid.appendChild(button);
+            });
+        }
+        
+        // Initialize color grid
+        function initializeColorGrid() {
+            const grid = document.getElementById('colorGrid');
+            predefinedColors.forEach((color, index) => {
+                const colorField = document.createElement('div');
+                colorField.className = 'color-field';
+                colorField.style.backgroundColor = `rgb(${color.r}, ${color.g}, ${color.b})`;
+                colorField.title = color.name;
+                colorField.onclick = () => selectColor(color.r, color.g, color.b, index);
+                colorField.id = `color-${index}`;
+                grid.appendChild(colorField);
+            });
+        }
+        
+        // Status updates
+        async function updateStatus() {
+            try {
+                const response = await fetch('/api/status');
+                const status = await response.json();
+                
+                // Update UI elements
+                document.getElementById('connectionStatus').textContent = status.connected ? 'Connected' : 'Disconnected';
+                document.getElementById('statusIndicator').className = `status-indicator ${status.connected ? 'online' : 'offline'}`;
+                document.getElementById('statusCard').className = `status-card ${status.connected ? 'connected' : 'disconnected'}`;
+                document.getElementById('arduinoPort').textContent = status.arduino_port;
+                document.getElementById('ledState').textContent = status.state;
+                document.getElementById('currentBrightness').textContent = status.brightness;
+                document.getElementById('currentEffect').textContent = effectNames[status.effect] || 'Unknown';
+                document.getElementById('currentSpeed').textContent = status.speed;
+                
+                // Update controls
+                updatePowerButton(status.state === 'ON');
+                updateColorFromStatus(status.r, status.g, status.b);
+                updateSliderValue('brightnessSlider', 'brightnessValue', status.brightness);
+                updateSliderValue('speedSlider', 'speedValue', status.speed);
+                updateSliderValue('intensitySlider', 'intensityValue', status.intensity);
+                updateActiveEffect(status.effect);
+                
+            } catch (error) {
+                console.error('Status update error:', error);
+                document.getElementById('connectionStatus').textContent = 'Error';
+                document.getElementById('statusIndicator').className = 'status-indicator offline';
+            }
+        }
+        
+        // Power control
+        async function togglePower() {
+            const newState = !currentState.power;
+            try {
+                const response = await fetch('/api/power', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ on: newState })
+                });
+                if (response.ok) {
+                    currentState.power = newState;
+                    updatePowerButton(newState);
+                }
+            } catch (error) {
+                console.error('Power toggle error:', error);
+            }
+        }
+        
+        function updatePowerButton(isOn) {
+            const button = document.getElementById('powerButton');
+            button.className = `power-button ${isOn ? 'on' : 'off'}`;
+            button.textContent = isOn ? 'ON' : 'OFF';
+            currentState.power = isOn;
+        }
+        
+        // Color control
+        function selectColor(r, g, b, colorIndex) {
+            // Update RGB inputs
+            document.getElementById('colorR').value = r;
+            document.getElementById('colorG').value = g;
+            document.getElementById('colorB').value = b;
+            
+            // Update active color field
+            updateActiveColor(colorIndex);
+            
+            // Update preview and send to Arduino
+            updateColorPreview();
+            sendColorToArduino(r, g, b);
+        }
+        
+        function updateActiveColor(activeIndex) {
+            // Remove active class from all color fields
+            document.querySelectorAll('.color-field').forEach(field => {
+                field.classList.remove('active');
+            });
+            
+            // Add active class to selected field
+            if (activeIndex !== undefined) {
+                const activeField = document.getElementById(`color-${activeIndex}`);
+                if (activeField) {
+                    activeField.classList.add('active');
+                }
+            }
+        }
+        
+        async function updateColorFromRGB() {
+            const r = parseInt(document.getElementById('colorR').value);
+            const g = parseInt(document.getElementById('colorG').value);
+            const b = parseInt(document.getElementById('colorB').value);
+            
+            // Update preview
+            updateColorPreview();
+            
+            // Find matching predefined color and update active state
+            const matchingColorIndex = predefinedColors.findIndex(color => 
+                color.r === r && color.g === g && color.b === b
+            );
+            updateActiveColor(matchingColorIndex >= 0 ? matchingColorIndex : undefined);
+            
+            // Send to Arduino
+            sendColorToArduino(r, g, b);
+        }
+        
+        async function sendColorToArduino(r, g, b) {
+            try {
+                const response = await fetch('/api/color', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ r, g, b })
+                });
+            } catch (error) {
+                console.error('Color update error:', error);
+            }
+        }
+        
+        function updateColorFromStatus(r, g, b) {
+            document.getElementById('colorR').value = r;
+            document.getElementById('colorG').value = g;
+            document.getElementById('colorB').value = b;
+            
+            // Find matching predefined color and update active state
+            const matchingColorIndex = predefinedColors.findIndex(color => 
+                color.r === r && color.g === g && color.b === b
+            );
+            updateActiveColor(matchingColorIndex >= 0 ? matchingColorIndex : undefined);
+            
+            updateColorPreview();
+        }
+        
+        function updateColorPreview() {
+            const r = document.getElementById('colorR').value;
+            const g = document.getElementById('colorG').value;
+            const b = document.getElementById('colorB').value;
+            const color = `rgb(${r}, ${g}, ${b})`;
+            document.getElementById('colorPreview').style.backgroundColor = color;
+        }
+        
+        // Slider controls
+        async function updateBrightness(value) {
+            updateSliderValue('brightnessSlider', 'brightnessValue', value);
+            try {
+                const response = await fetch('/api/brightness', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ brightness: parseInt(value) })
+                });
+            } catch (error) {
+                console.error('Brightness update error:', error);
+            }
+        }
+        
+        async function updateSpeed(value) {
+            updateSliderValue('speedSlider', 'speedValue', value);
+            try {
+                const response = await fetch('/api/speed', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ speed: parseInt(value) })
+                });
+            } catch (error) {
+                console.error('Speed update error:', error);
+            }
+        }
+        
+        async function updateIntensity(value) {
+            updateSliderValue('intensitySlider', 'intensityValue', value);
+            try {
+                const response = await fetch('/api/intensity', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ intensity: parseInt(value) })
+                });
+            } catch (error) {
+                console.error('Intensity update error:', error);
+            }
+        }
+        
+        function updateSliderValue(sliderId, valueId, value) {
+            document.getElementById(sliderId).value = value;
+            document.getElementById(valueId).textContent = value;
+        }
+        
+        // Effect control
+        async function setEffect(effectId) {
+            try {
+                const response = await fetch('/api/effect', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ effect: effectId })
+                });
+                if (response.ok) {
+                    updateActiveEffect(effectId);
+                }
+            } catch (error) {
+                console.error('Effect update error:', error);
+            }
+        }
+        
+        function updateActiveEffect(effectId) {
+            // Remove active class from all buttons
+            document.querySelectorAll('.effect-button').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            
+            // Add active class to selected button
+            const activeButton = document.getElementById(`effect-${effectId}`);
+            if (activeButton) {
+                activeButton.classList.add('active');
+            }
+            
+            currentState.effect = effectId;
+        }
+    </script>
+</body>
+</html>
