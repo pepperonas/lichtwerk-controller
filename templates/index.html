@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lichtwerk Controller</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="manifest" href="{{ url_for('static', filename='site.webmanifest') }}">
+    <meta name="theme-color" content="#2B2E3B">
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
+    <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='favicon-16x16.png') }}">
+    <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='favicon-32x32.png') }}">
+    <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='apple-touch-icon.png') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🌈 Lichtwerk Controller</h1>
+            <div class="status-indicator" id="status-indicator">
+                <span id="status-text">Connecting...</span>
+                <div class="status-dot" id="status-dot"></div>
+            </div>
+        </header>
+
+        <main>
+            <!-- Power Control -->
+            <section class="control-section">
+                <div class="power-control">
+                    <label class="switch">
+                        <input type="checkbox" id="power-toggle">
+                        <span class="slider round"></span>
+                    </label>
+                    <span class="power-label">Power</span>
+                </div>
+            </section>
+
+            <!-- Color Picker -->
+            <section class="control-section">
+                <h3>Color Control</h3>
+                <div class="color-picker-container">
+                    <div class="color-display" id="color-display"></div>
+                    <div class="color-inputs">
+                        <div class="color-input-group">
+                            <label for="red-slider">Red</label>
+                            <input type="range" id="red-slider" min="0" max="255" value="255">
+                            <input type="number" id="red-value" min="0" max="255" value="255">
+                        </div>
+                        <div class="color-input-group">
+                            <label for="green-slider">Green</label>
+                            <input type="range" id="green-slider" min="0" max="255" value="255">
+                            <input type="number" id="green-value" min="0" max="255" value="255">
+                        </div>
+                        <div class="color-input-group">
+                            <label for="blue-slider">Blue</label>
+                            <input type="range" id="blue-slider" min="0" max="255" value="255">
+                            <input type="number" id="blue-value" min="0" max="255" value="255">
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Predefined Colors -->
+                <div class="predefined-colors">
+                    <div class="color-preset" data-color="255,0,0" style="background-color: rgb(255,0,0);"></div>
+                    <div class="color-preset" data-color="0,255,0" style="background-color: rgb(0,255,0);"></div>
+                    <div class="color-preset" data-color="0,0,255" style="background-color: rgb(0,0,255);"></div>
+                    <div class="color-preset" data-color="255,255,0" style="background-color: rgb(255,255,0);"></div>
+                    <div class="color-preset" data-color="255,0,255" style="background-color: rgb(255,0,255);"></div>
+                    <div class="color-preset" data-color="0,255,255" style="background-color: rgb(0,255,255);"></div>
+                    <div class="color-preset" data-color="255,128,0" style="background-color: rgb(255,128,0);"></div>
+                    <div class="color-preset" data-color="128,0,255" style="background-color: rgb(128,0,255);"></div>
+                    <div class="color-preset" data-color="255,255,255" style="background-color: rgb(255,255,255);"></div>
+                    <div class="color-preset" data-color="255,192,203" style="background-color: rgb(255,192,203);"></div>
+                    <div class="color-preset" data-color="173,216,230" style="background-color: rgb(173,216,230);"></div>
+                    <div class="color-preset" data-color="144,238,144" style="background-color: rgb(144,238,144);"></div>
+                    <div class="color-preset" data-color="255,218,185" style="background-color: rgb(255,218,185);"></div>
+                    <div class="color-preset" data-color="221,160,221" style="background-color: rgb(221,160,221);"></div>
+                    <div class="color-preset" data-color="255,182,193" style="background-color: rgb(255,182,193);"></div>
+                    <div class="color-preset" data-color="64,224,208" style="background-color: rgb(64,224,208);"></div>
+                    <div class="color-preset" data-color="255,215,0" style="background-color: rgb(255,215,0);"></div>
+                    <div class="color-preset" data-color="128,128,128" style="background-color: rgb(128,128,128);"></div>
+                </div>
+            </section>
+
+            <!-- Effects -->
+            <section class="control-section">
+                <h3>Effects</h3>
+                <div class="effects-grid">
+                    <button class="effect-btn active" data-effect="solid">Solid</button>
+                    <button class="effect-btn" data-effect="rainbow">Rainbow</button>
+                    <button class="effect-btn" data-effect="pulse">Pulse</button>
+                    <button class="effect-btn" data-effect="chase">Chase</button>
+                    <button class="effect-btn" data-effect="sparkle">Sparkle</button>
+                    <button class="effect-btn" data-effect="strobe">Strobe</button>
+                    <button class="effect-btn" data-effect="meteor">Meteor</button>
+                    <button class="effect-btn" data-effect="breathe">Breathe</button>
+                </div>
+            </section>
+
+            <!-- Brightness Control -->
+            <section class="control-section">
+                <h3>Brightness</h3>
+                <div class="slider-container">
+                    <input type="range" id="brightness-slider" min="0" max="255" value="100">
+                    <div class="slider-value" id="brightness-value">100</div>
+                </div>
+            </section>
+
+            <!-- Speed Control -->
+            <section class="control-section">
+                <h3>Speed / Intensity</h3>
+                <div class="slider-container">
+                    <input type="range" id="speed-slider" min="1" max="100" value="50">
+                    <div class="slider-value" id="speed-value">50</div>
+                </div>
+            </section>
+
+            <!-- System Info -->
+            <section class="control-section">
+                <h3>System Information</h3>
+                <div class="system-info">
+                    <div class="info-item">
+                        <span class="info-label">LED Count:</span>
+                        <span class="info-value" id="led-count">--</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">GPIO Pin:</span>
+                        <span class="info-value" id="gpio-pin">--</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Current Effect:</span>
+                        <span class="info-value" id="current-effect">--</span>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

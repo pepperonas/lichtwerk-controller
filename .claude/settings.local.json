@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git config:*)",
+      "Bash(ssh-keygen:*)",
+      "Bash(ssh-add:*)",
+      "Bash(cat:*)",
+      "Bash(ssh:*)",
+      "Bash(python3:*)",
+      "Bash(pkill:*)",
+      "Bash(curl:*)",
+      "Bash(pm2 stop:*)",
+      "Bash(pm2 delete:*)",
+      "Bash(pm2 start:*)",
+      "Bash(pm2 save:*)",
+      "Bash(pm2 status:*)",
+      "Bash(sudo chmod:*)",
+      "Bash(sudo chown:*)",
+      "Bash(sudo:*)",
+      "Bash(pm2 restart:*)",
+      "Bash(grep:*)",
+      "Bash(cp:*)",
+      "Bash(ss:*)",
+      "Bash(pm2 list:*)",
+      "Bash(pm2 logs:*)",
+      "Bash(git init:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

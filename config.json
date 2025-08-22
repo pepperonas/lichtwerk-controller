@@ -1,0 +1,39 @@
+{
+    "led_config": {
+        "pin": 21,
+        "led_count": 600,
+        "led_freq_hz": 800000,
+        "led_dma": 10,
+        "led_invert": false,
+        "led_brightness": 100,
+        "led_channel": 0,
+        "strip_type": "WS2812"
+    },
+    "default_effect": "rainbow",
+    "effects": {
+        "rainbow": {
+            "speed": 0.01,
+            "brightness": 0.5
+        },
+        "solid": {
+            "color": [255, 255, 255],
+            "brightness": 0.5
+        },
+        "pulse": {
+            "color": [0, 100, 255],
+            "speed": 0.05,
+            "min_brightness": 0.1,
+            "max_brightness": 1.0
+        },
+        "chase": {
+            "color": [255, 0, 0],
+            "speed": 0.1,
+            "segment_size": 10
+        },
+        "sparkle": {
+            "color": [255, 255, 255],
+            "density": 0.05,
+            "fade_speed": 0.9
+        }
+    }
+}
