@@ -41,6 +41,10 @@ class LichtwerkController {
         
         // Color presets
         this.colorPresets = document.querySelectorAll('.color-preset');
+        
+        // Color mode control for meteor_adv
+        this.colorModeControl = document.getElementById('color-mode-control');
+        this.colorModeCheckbox = document.getElementById('color-mode-checkbox');
     }
     
     attachEventListeners() {
@@ -100,6 +104,14 @@ class LichtwerkController {
                 this.setColorValues(r, g, b);
             });
         });
+        
+        // Color mode checkbox for meteor_adv
+        if (this.colorModeCheckbox) {
+            this.colorModeCheckbox.addEventListener('change', () => {
+                const mode = this.colorModeCheckbox.checked ? 'changing' : 'static';
+                this.setColorMode(mode);
+            });
+        }
     }
     
     updateColor() {
@@ -184,6 +196,15 @@ class LichtwerkController {
             btn.classList.toggle('active', btn.dataset.effect === status.effect);
         });
         
+        // Show/hide color mode control for meteor_adv
+        if (this.colorModeControl) {
+            if (status.effect === 'meteor_adv') {
+                this.colorModeControl.style.display = 'block';
+            } else {
+                this.colorModeControl.style.display = 'none';
+            }
+        }
+        
         // System info
         this.ledCount.textContent = status.led_count;
         this.gpioPin.textContent = status.pin;
@@ -242,8 +263,25 @@ class LichtwerkController {
                 btn.classList.toggle('active', btn.dataset.effect === effect);
             });
             this.currentEffect.textContent = effect.charAt(0).toUpperCase() + effect.slice(1);
+            
+            // Show/hide color mode control for meteor_adv
+            if (this.colorModeControl) {
+                if (effect === 'meteor_adv') {
+                    this.colorModeControl.style.display = 'block';
+                } else {
+                    this.colorModeControl.style.display = 'none';
+                }
+            }
         } catch (error) {
             console.error('Failed to set effect:', error);
+        }
+    }
+    
+    async setColorMode(mode) {
+        try {
+            await this.apiCall('color_mode', 'POST', { mode });
+        } catch (error) {
+            console.error('Failed to set color mode:', error);
         }
     }
     

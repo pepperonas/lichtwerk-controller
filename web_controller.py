@@ -262,6 +262,112 @@ class LichtwerkWebController:
         self.effect_params['meteor_positions'] = active_meteors
         self.strip.show()
     
+    def effect_meteor_adv(self):
+        """Advanced meteor effect with multiple meteors and color modes"""
+        if not self.strip:
+            return
+        
+        # Initialize meteor parameters if not exists
+        if 'meteor_adv_channels' not in self.effect_params:
+            meteor_count = 4  # Number of simultaneous meteors
+            self.effect_params['meteor_adv_channels'] = []
+            self.effect_params['meteor_adv_pixel_states'] = [[0, 0, 0] for _ in range(self.strip.numPixels())]
+            self.effect_params['meteor_adv_color_mode'] = 'changing'  # 'static' or 'changing'
+            
+            # Initialize meteors with different starting positions and colors
+            for i in range(meteor_count):
+                hue_offset = (360 / meteor_count) * i  # Evenly distribute hues
+                self.effect_params['meteor_adv_channels'].append({
+                    'position': (self.strip.numPixels() / meteor_count) * i,
+                    'hue': hue_offset,
+                    'direction': i % 2 == 0,  # Alternate directions
+                    'speed': random.uniform(0.5, 2.0),
+                    'size': random.randint(4, 8),
+                    'trail_decay': random.randint(3, 6)
+                })
+        
+        # Fade all pixels with trail decay
+        for i in range(self.strip.numPixels()):
+            # Random decay for more organic look
+            if random.random() > 0.2:  # 80% chance to decay
+                decay_factor = 0.85
+                self.effect_params['meteor_adv_pixel_states'][i][0] = int(self.effect_params['meteor_adv_pixel_states'][i][0] * decay_factor)
+                self.effect_params['meteor_adv_pixel_states'][i][1] = int(self.effect_params['meteor_adv_pixel_states'][i][1] * decay_factor)
+                self.effect_params['meteor_adv_pixel_states'][i][2] = int(self.effect_params['meteor_adv_pixel_states'][i][2] * decay_factor)
+            
+            # Apply faded color
+            self.strip.setPixelColor(i, Color(
+                self.effect_params['meteor_adv_pixel_states'][i][0],
+                self.effect_params['meteor_adv_pixel_states'][i][1],
+                self.effect_params['meteor_adv_pixel_states'][i][2]
+            ))
+        
+        # Update and draw each meteor
+        for meteor in self.effect_params['meteor_adv_channels']:
+            # Update position based on direction and speed
+            speed_factor = meteor['speed'] * (self.speed / 50.0)  # Scale with global speed
+            if meteor['direction']:
+                meteor['position'] -= speed_factor
+            else:
+                meteor['position'] += speed_factor
+            
+            # Bounce at edges
+            if meteor['position'] < meteor['size']:
+                meteor['direction'] = False
+                meteor['position'] = meteor['size']
+            elif meteor['position'] >= self.strip.numPixels():
+                meteor['direction'] = True
+                meteor['position'] = self.strip.numPixels() - 1
+            
+            # Update hue if in changing color mode
+            if self.effect_params['meteor_adv_color_mode'] == 'changing':
+                meteor['hue'] += 0.5
+                if meteor['hue'] > 360:
+                    meteor['hue'] -= 360
+            
+            # Draw meteor head with gradient
+            for j in range(meteor['size']):
+                pixel_pos = int(meteor['position'] - j)
+                if 0 <= pixel_pos < self.strip.numPixels():
+                    # Calculate brightness gradient
+                    brightness = max(0.1, 1.0 - (j / meteor['size']) * 0.5)
+                    
+                    # Get color based on mode
+                    if self.effect_params['meteor_adv_color_mode'] == 'static':
+                        r, g, b = self.color[0], self.color[1], self.color[2]
+                    else:
+                        # HSV to RGB conversion for changing colors
+                        h = meteor['hue'] / 360.0
+                        r, g, b = self.hsv_to_rgb(h, 1.0, 1.0)
+                    
+                    # Apply brightness and blend with existing pixel
+                    new_r = int(r * brightness)
+                    new_g = int(g * brightness)
+                    new_b = int(b * brightness)
+                    
+                    # Blend with existing pixel (75% new, 25% old)
+                    old_r = self.effect_params['meteor_adv_pixel_states'][pixel_pos][0]
+                    old_g = self.effect_params['meteor_adv_pixel_states'][pixel_pos][1]
+                    old_b = self.effect_params['meteor_adv_pixel_states'][pixel_pos][2]
+                    
+                    self.effect_params['meteor_adv_pixel_states'][pixel_pos][0] = int(new_r * 0.75 + old_r * 0.25)
+                    self.effect_params['meteor_adv_pixel_states'][pixel_pos][1] = int(new_g * 0.75 + old_g * 0.25)
+                    self.effect_params['meteor_adv_pixel_states'][pixel_pos][2] = int(new_b * 0.75 + old_b * 0.25)
+                    
+                    self.strip.setPixelColor(pixel_pos, Color(
+                        self.effect_params['meteor_adv_pixel_states'][pixel_pos][0],
+                        self.effect_params['meteor_adv_pixel_states'][pixel_pos][1],
+                        self.effect_params['meteor_adv_pixel_states'][pixel_pos][2]
+                    ))
+        
+        self.strip.show()
+    
+    def hsv_to_rgb(self, h, s, v):
+        """Convert HSV to RGB color space"""
+        import colorsys
+        r, g, b = colorsys.hsv_to_rgb(h, s, v)
+        return int(r * 255), int(g * 255), int(b * 255)
+    
     def effect_breathe(self):
         if not self.strip:
             return
@@ -301,6 +407,7 @@ class LichtwerkWebController:
             'sparkle': self.effect_sparkle,
             'strobe': self.effect_strobe,
             'meteor': self.effect_meteor,
+            'meteor_adv': self.effect_meteor_adv,
             'breathe': self.effect_breathe
         }
         
@@ -376,13 +483,16 @@ def set_speed():
 def set_effect():
     data = request.get_json()
     effect = data.get('effect', 'solid')
-    valid_effects = ['solid', 'rainbow', 'pulse', 'chase', 'sparkle', 'strobe', 'meteor', 'breathe']
+    valid_effects = ['solid', 'rainbow', 'pulse', 'chase', 'sparkle', 'strobe', 'meteor', 'meteor_adv', 'breathe']
     
     if effect in valid_effects:
         controller.current_effect = effect
         # Reset effect parameters when changing effects
         if effect == 'meteor':
             controller.effect_params['meteor_positions'] = []
+        elif effect == 'meteor_adv':
+            controller.effect_params['meteor_adv_channels'] = []
+            controller.effect_params['meteor_adv_pixel_states'] = []
         elif effect == 'breathe':
             controller.effect_params['breathe_brightness'] = 0.1
             controller.effect_params['breathe_direction'] = 1
@@ -408,6 +518,17 @@ def set_color():
     b = max(0, min(255, int(data.get('b', 255))))
     controller.color = [r, g, b]
     return jsonify({'status': 'ok', 'color': {'r': r, 'g': g, 'b': b}})
+
+@app.route('/api/color_mode', methods=['POST'])
+def set_color_mode():
+    data = request.get_json()
+    mode = data.get('mode', 'changing')
+    if mode in ['static', 'changing']:
+        if 'meteor_adv_color_mode' in controller.effect_params:
+            controller.effect_params['meteor_adv_color_mode'] = mode
+        return jsonify({'status': 'ok', 'color_mode': mode})
+    else:
+        return jsonify({'status': 'error', 'message': 'Invalid color mode'}), 400
 
 if __name__ == '__main__':
     print("Lichtwerk Web Controller starting...")
