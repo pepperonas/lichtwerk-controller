@@ -263,104 +263,81 @@ class LichtwerkWebController:
         self.strip.show()
     
     def effect_meteor_adv(self):
-        """Advanced meteor effect with multiple meteors and color modes"""
+        """FastLED-inspired meteor effect with realistic trails"""
         if not self.strip:
             return
         
-        # Initialize meteor parameters if not exists
-        if 'meteor_adv_channels' not in self.effect_params:
-            meteor_count = 4  # Number of simultaneous meteors
-            self.effect_params['meteor_adv_channels'] = []
-            self.effect_params['meteor_adv_pixel_states'] = [[0, 0, 0] for _ in range(self.strip.numPixels())]
+        # Initialize FastLED-style meteor parameters
+        if 'meteor_adv_position' not in self.effect_params:
+            self.effect_params['meteor_adv_position'] = 0
+            self.effect_params['meteor_adv_size'] = 6  # FastLED typical meteor size
+            self.effect_params['meteor_adv_trail_decay'] = 64  # FastLED decay value (0-255)
+            self.effect_params['meteor_adv_random_decay'] = True
             self.effect_params['meteor_adv_color_mode'] = 'changing'  # 'static' or 'changing'
-            
-            # Initialize meteors with different starting positions and colors
-            for i in range(meteor_count):
-                hue_offset = (360 / meteor_count) * i  # Evenly distribute hues
-                self.effect_params['meteor_adv_channels'].append({
-                    'position': (self.strip.numPixels() / meteor_count) * i,
-                    'hue': hue_offset,
-                    'direction': i % 2 == 0,  # Alternate directions
-                    'speed': random.uniform(0.5, 2.0),
-                    'size': random.randint(4, 8),
-                    'trail_decay': random.randint(3, 6)
-                })
+            self.effect_params['meteor_adv_hue'] = 0  # For changing colors
         
-        # Fade all pixels with trail decay
+        # Get background color (dark for dramatic effect)
+        background_color = [16, 0, 0]  # Dark red background like FastLED examples
+        
+        # FastLED-style fade all pixels toward background color
         for i in range(self.strip.numPixels()):
-            # Random decay for more organic look
-            if random.random() > 0.2:  # 80% chance to decay
-                decay_factor = 0.85
-                self.effect_params['meteor_adv_pixel_states'][i][0] = int(self.effect_params['meteor_adv_pixel_states'][i][0] * decay_factor)
-                self.effect_params['meteor_adv_pixel_states'][i][1] = int(self.effect_params['meteor_adv_pixel_states'][i][1] * decay_factor)
-                self.effect_params['meteor_adv_pixel_states'][i][2] = int(self.effect_params['meteor_adv_pixel_states'][i][2] * decay_factor)
-            
-            # Apply faded color
-            self.strip.setPixelColor(i, Color(
-                self.effect_params['meteor_adv_pixel_states'][i][0],
-                self.effect_params['meteor_adv_pixel_states'][i][1],
-                self.effect_params['meteor_adv_pixel_states'][i][2]
-            ))
+            # Random decay for organic look (FastLED feature)
+            if not self.effect_params['meteor_adv_random_decay'] or random.randint(0, 10) > 5:
+                current_r = (self.strip.getPixelColor(i) >> 16) & 0xFF
+                current_g = (self.strip.getPixelColor(i) >> 8) & 0xFF  
+                current_b = self.strip.getPixelColor(i) & 0xFF
+                
+                # FastLED-style fadeTowardColor function
+                new_r, new_g, new_b = self.fade_toward_color(
+                    [current_r, current_g, current_b],
+                    background_color,
+                    self.effect_params['meteor_adv_trail_decay']
+                )
+                self.strip.setPixelColor(i, Color(new_r, new_g, new_b))
         
-        # Update and draw each meteor
-        for meteor in self.effect_params['meteor_adv_channels']:
-            # Update position based on direction and speed
-            speed_factor = meteor['speed'] * (self.speed / 50.0)  # Scale with global speed
-            if meteor['direction']:
-                meteor['position'] -= speed_factor
-            else:
-                meteor['position'] += speed_factor
-            
-            # Bounce at edges
-            if meteor['position'] < meteor['size']:
-                meteor['direction'] = False
-                meteor['position'] = meteor['size']
-            elif meteor['position'] >= self.strip.numPixels():
-                meteor['direction'] = True
-                meteor['position'] = self.strip.numPixels() - 1
-            
-            # Update hue if in changing color mode
-            if self.effect_params['meteor_adv_color_mode'] == 'changing':
-                meteor['hue'] += 0.5
-                if meteor['hue'] > 360:
-                    meteor['hue'] -= 360
-            
-            # Draw meteor head with gradient
-            for j in range(meteor['size']):
-                pixel_pos = int(meteor['position'] - j)
-                if 0 <= pixel_pos < self.strip.numPixels():
-                    # Calculate brightness gradient
-                    brightness = max(0.1, 1.0 - (j / meteor['size']) * 0.5)
-                    
-                    # Get color based on mode
-                    if self.effect_params['meteor_adv_color_mode'] == 'static':
-                        r, g, b = self.color[0], self.color[1], self.color[2]
-                    else:
-                        # HSV to RGB conversion for changing colors
-                        h = meteor['hue'] / 360.0
-                        r, g, b = self.hsv_to_rgb(h, 1.0, 1.0)
-                    
-                    # Apply brightness and blend with existing pixel
-                    new_r = int(r * brightness)
-                    new_g = int(g * brightness)
-                    new_b = int(b * brightness)
-                    
-                    # Blend with existing pixel (75% new, 25% old)
-                    old_r = self.effect_params['meteor_adv_pixel_states'][pixel_pos][0]
-                    old_g = self.effect_params['meteor_adv_pixel_states'][pixel_pos][1]
-                    old_b = self.effect_params['meteor_adv_pixel_states'][pixel_pos][2]
-                    
-                    self.effect_params['meteor_adv_pixel_states'][pixel_pos][0] = int(new_r * 0.75 + old_r * 0.25)
-                    self.effect_params['meteor_adv_pixel_states'][pixel_pos][1] = int(new_g * 0.75 + old_g * 0.25)
-                    self.effect_params['meteor_adv_pixel_states'][pixel_pos][2] = int(new_b * 0.75 + old_b * 0.25)
-                    
-                    self.strip.setPixelColor(pixel_pos, Color(
-                        self.effect_params['meteor_adv_pixel_states'][pixel_pos][0],
-                        self.effect_params['meteor_adv_pixel_states'][pixel_pos][1],
-                        self.effect_params['meteor_adv_pixel_states'][pixel_pos][2]
-                    ))
+        # Get meteor color based on mode
+        if self.effect_params['meteor_adv_color_mode'] == 'static':
+            meteor_color = self.color
+        else:
+            # Cycling rainbow colors (FastLED-style)
+            self.effect_params['meteor_adv_hue'] = (self.effect_params['meteor_adv_hue'] + 1) % 360
+            h = self.effect_params['meteor_adv_hue'] / 360.0
+            meteor_color = self.hsv_to_rgb(h, 1.0, 1.0)
+        
+        # Draw meteor with FastLED-style approach
+        meteor_pos = int(self.effect_params['meteor_adv_position'])
+        meteor_size = self.effect_params['meteor_adv_size']
+        
+        for j in range(meteor_size):
+            pixel_idx = meteor_pos - j
+            if 0 <= pixel_idx < self.strip.numPixels():
+                self.strip.setPixelColor(pixel_idx, Color(meteor_color[0], meteor_color[1], meteor_color[2]))
+        
+        # Advance meteor position (FastLED linear movement)
+        speed_factor = (self.speed / 100.0) * 2.0  # Scale speed appropriately
+        self.effect_params['meteor_adv_position'] += speed_factor
+        
+        # Reset meteor when it exits the strip (FastLED behavior)
+        if self.effect_params['meteor_adv_position'] >= self.strip.numPixels() + meteor_size:
+            self.effect_params['meteor_adv_position'] = 0
         
         self.strip.show()
+    
+    def fade_toward_color(self, current_color, target_color, fade_amount):
+        """FastLED-style fadeTowardColor function"""
+        def fade_component(current, target, amount):
+            if current == target:
+                return current
+            elif current < target:
+                return min(current + amount, target)
+            else:
+                return max(current - amount, target)
+        
+        return [
+            fade_component(current_color[0], target_color[0], fade_amount),
+            fade_component(current_color[1], target_color[1], fade_amount),
+            fade_component(current_color[2], target_color[2], fade_amount)
+        ]
     
     def hsv_to_rgb(self, h, s, v):
         """Convert HSV to RGB color space"""
@@ -491,8 +468,8 @@ def set_effect():
         if effect == 'meteor':
             controller.effect_params['meteor_positions'] = []
         elif effect == 'meteor_adv':
-            controller.effect_params['meteor_adv_channels'] = []
-            controller.effect_params['meteor_adv_pixel_states'] = []
+            controller.effect_params['meteor_adv_position'] = 0
+            controller.effect_params['meteor_adv_hue'] = 0
         elif effect == 'breathe':
             controller.effect_params['breathe_brightness'] = 0.1
             controller.effect_params['breathe_direction'] = 1
