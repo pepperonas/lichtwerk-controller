@@ -4,8 +4,9 @@ A sophisticated WS2812B LED strip controller for Raspberry Pi with web interface
 
 ## Features
 
-- **Web Interface**: Control LEDs through an intuitive web UI on port 5006
-- **Multiple Effects**: Rainbow, Pulse, Chase, Sparkle, Strobe, Meteor, Breathe, and Solid colors
+- **Modern Web Interface**: Control LEDs through an intuitive web UI on port 5006 with Teufel-inspired design
+- **Multiple Effects**: Rainbow, Pulse, Chase, Sparkle, Strobe, Meteor, Breathe, Sinelon, Juggle, Theater, Gradient, Fire
+- **Interactive Controls**: Circular power button, theater mode toggle, and real-time parameter adjustment
 - **Real-time Control**: Adjust brightness, speed, and colors on the fly
 - **PM2 Integration**: Professional process management with auto-restart
 - **Demo Mode**: Runs without hardware for testing
@@ -141,7 +142,12 @@ Edit `config.json` to customize:
 
 - `GET /` - Web interface
 - `GET /api/status` - Current status and settings
-- `POST /api/control` - Update settings (power, brightness, speed, color, effect)
+- `POST /api/power` - Toggle power on/off
+- `POST /api/brightness` - Set brightness (0-255)
+- `POST /api/speed` - Set speed/intensity (1-100)
+- `POST /api/color` - Set RGB color values
+- `POST /api/effect` - Change LED effect
+- `POST /api/theater_mode` - Toggle theater effect rainbow/single color mode
 
 ## Safety Notes
 
