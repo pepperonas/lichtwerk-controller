@@ -43,6 +43,7 @@ class LichtwerkWebController:
         self.brightness = 100
         self.speed = 50
         self.color = [255, 255, 255]
+        self.theater_rainbow = True  # Toggle for theater effect
         self.effect_thread = None
         
         # Effect parameters
@@ -386,7 +387,7 @@ class LichtwerkWebController:
         self.strip.show()
     
     def effect_theater_chase_rainbow(self):
-        """Theater chase with rainbow colors"""
+        """Theater chase with rainbow or single color"""
         if not self.strip:
             return
         
@@ -406,9 +407,14 @@ class LichtwerkWebController:
         for i in range(0, self.strip.numPixels(), 3):
             idx = i + q
             if idx < self.strip.numPixels():
-                # Rainbow color based on position and time
-                hue = ((i + j) % 255) / 255.0
-                color = self.hsv_to_rgb(hue, 1.0, 1.0)
+                if self.theater_rainbow:
+                    # Rainbow color based on position and time
+                    hue = ((i + j) % 255) / 255.0
+                    color = self.hsv_to_rgb(hue, 1.0, 1.0)
+                else:
+                    # Use single color
+                    color = (self.color[0], self.color[1], self.color[2])
+                
                 brightness_factor = self.brightness / 255.0
                 self.strip.setPixelColor(idx, Color(
                     int(color[0] * brightness_factor),
@@ -614,6 +620,7 @@ class LichtwerkWebController:
                 'g': self.color[1],
                 'b': self.color[2]
             },
+            'theater_rainbow': self.theater_rainbow,
             'led_count': self.strip.numPixels() if self.strip else 50,
             'pin': self.config['led_config']['pin']
         }
@@ -705,14 +712,12 @@ def set_color():
     controller.color = [r, g, b]
     return jsonify({'status': 'ok', 'color': {'r': r, 'g': g, 'b': b}})
 
-@app.route('/api/color_mode', methods=['POST'])
-def set_color_mode():
+@app.route('/api/theater_mode', methods=['POST'])
+def set_theater_mode():
     data = request.get_json()
-    mode = data.get('mode', 'changing')
-    if mode in ['static', 'changing']:
-        return jsonify({'status': 'ok', 'color_mode': mode})
-    else:
-        return jsonify({'status': 'error', 'message': 'Invalid color mode'}), 400
+    rainbow = data.get('rainbow', True)
+    controller.theater_rainbow = bool(rainbow)
+    return jsonify({'status': 'ok', 'theater_rainbow': controller.theater_rainbow})
 
 if __name__ == '__main__':
     print("Lichtwerk Web Controller starting...")

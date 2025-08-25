@@ -105,11 +105,11 @@ class LichtwerkController {
             });
         });
         
-        // Color mode checkbox for meteor_adv
+        // Color mode checkbox for theater effect
         if (this.colorModeCheckbox) {
             this.colorModeCheckbox.addEventListener('change', () => {
-                const mode = this.colorModeCheckbox.checked ? 'changing' : 'static';
-                this.setColorMode(mode);
+                const rainbow = this.colorModeCheckbox.checked;
+                this.setTheaterMode(rainbow);
             });
         }
     }
@@ -196,10 +196,14 @@ class LichtwerkController {
             btn.classList.toggle('active', btn.dataset.effect === status.effect);
         });
         
-        // Show/hide color mode control for meteor_adv
+        // Show/hide color mode control for theater effect
         if (this.colorModeControl) {
-            if (status.effect === 'meteor_adv') {
+            if (status.effect === 'theater') {
                 this.colorModeControl.style.display = 'block';
+                // Update checkbox state from server
+                if (status.theater_rainbow !== undefined) {
+                    this.colorModeCheckbox.checked = status.theater_rainbow;
+                }
             } else {
                 this.colorModeControl.style.display = 'none';
             }
@@ -264,9 +268,9 @@ class LichtwerkController {
             });
             this.currentEffect.textContent = effect.charAt(0).toUpperCase() + effect.slice(1);
             
-            // Show/hide color mode control for meteor_adv
+            // Show/hide color mode control for theater effect
             if (this.colorModeControl) {
-                if (effect === 'meteor_adv') {
+                if (effect === 'theater') {
                     this.colorModeControl.style.display = 'block';
                 } else {
                     this.colorModeControl.style.display = 'none';
@@ -277,11 +281,13 @@ class LichtwerkController {
         }
     }
     
-    async setColorMode(mode) {
+    async setTheaterMode(rainbow) {
         try {
-            await this.apiCall('color_mode', 'POST', { mode });
+            await this.apiCall('theater_mode', 'POST', { rainbow });
         } catch (error) {
-            console.error('Failed to set color mode:', error);
+            console.error('Failed to set theater mode:', error);
+            // Revert checkbox on error
+            this.colorModeCheckbox.checked = !rainbow;
         }
     }
     
