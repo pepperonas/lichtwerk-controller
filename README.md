@@ -129,8 +129,13 @@ Edit `config.json` to customize:
 - **Chase**: Running lights effect
 - **Sparkle**: Random twinkling pixels
 - **Strobe**: Fast flashing effect
-- **Meteor**: Shooting star effect with trails
+- **Meteor**: Shooting star effect with trails (fixed in latest version)
 - **Breathe**: Gentle fading in and out
+- **Sinelon**: Sinusoidal wave with fading trail
+- **Juggle**: Eight colored dots weaving in and out
+- **Theater**: Theater chase with rainbow colors
+- **Gradient**: Gradient fill effect
+- **Fire**: Realistic fire simulation
 
 ## API Endpoints
 
