@@ -6,6 +6,7 @@
     --accent-blue: #688db1;
     --accent-green: #9cb68f;
     --accent-red: #e16162;
+    --accent-orange: #e4a853;
     --text-primary: #d1d5db;
     --text-secondary: #9ca3af;
     
@@ -203,7 +204,7 @@ h4 {
 }
 
 
-/* Power Button */
+/* Power Button - Teufel Style */
 .power-button {
     width: 120px;
     height: 120px;
@@ -220,34 +221,29 @@ h4 {
     box-shadow: var(--shadow);
 }
 
-.power-button svg {
-    width: 50px;
-    height: 50px;
-    stroke: var(--text-secondary);
-    stroke-width: 2;
-    fill: none;
-    transition: all 0.3s ease;
-}
-
 .power-button:hover {
+    border-color: var(--accent-blue);
     transform: scale(1.05);
-    border-color: rgba(255, 255, 255, 0.5);
     box-shadow: var(--shadow-lg);
 }
 
-.power-button:hover svg {
-    stroke: var(--text-primary);
+.power-button.active {
+    border-color: var(--accent-green);
+    background: rgba(156, 182, 143, 0.2);
+    box-shadow: 0 0 20px rgba(156, 182, 143, 0.5);
 }
 
-.power-button.active {
-    background: linear-gradient(135deg, var(--accent-green), var(--accent-blue));
-    border-color: var(--accent-green);
-    box-shadow: 0 0 30px rgba(156, 182, 143, 0.5);
+.power-button svg {
+    width: 60px;
+    height: 60px;
+    stroke: var(--text-secondary);
+    fill: none;
+    stroke-width: 2.5;
+    transition: stroke 0.3s ease;
 }
 
 .power-button.active svg {
-    stroke: white;
-    filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.5));
+    stroke: var(--accent-green);
 }
 
 .power-button:active {
