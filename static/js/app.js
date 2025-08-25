@@ -12,7 +12,7 @@ class LichtwerkController {
     
     initializeElements() {
         // Power control
-        this.powerToggle = document.getElementById('power-toggle');
+        this.powerButton = document.getElementById('power-btn');
         
         // Color controls
         this.colorDisplay = document.getElementById('color-display');
@@ -48,9 +48,10 @@ class LichtwerkController {
     }
     
     attachEventListeners() {
-        // Power toggle
-        this.powerToggle.addEventListener('change', () => {
-            this.setPower(this.powerToggle.checked);
+        // Power button
+        this.powerButton.addEventListener('click', () => {
+            const isActive = this.powerButton.classList.contains('active');
+            this.setPower(!isActive);
         });
         
         // Color sliders
@@ -178,7 +179,11 @@ class LichtwerkController {
     
     updateUI(status) {
         // Power
-        this.powerToggle.checked = status.power;
+        if (status.power) {
+            this.powerButton.classList.add('active');
+        } else {
+            this.powerButton.classList.remove('active');
+        }
         
         // Color
         this.setColorValues(status.color.r, status.color.g, status.color.b);
@@ -228,9 +233,20 @@ class LichtwerkController {
     async setPower(power) {
         try {
             await this.apiCall('power', 'POST', { power });
+            // Update button state immediately
+            if (power) {
+                this.powerButton.classList.add('active');
+            } else {
+                this.powerButton.classList.remove('active');
+            }
         } catch (error) {
             console.error('Failed to set power:', error);
-            this.powerToggle.checked = !power; // Revert on error
+            // Revert button state on error
+            if (power) {
+                this.powerButton.classList.remove('active');
+            } else {
+                this.powerButton.classList.add('active');
+            }
         }
     }
     

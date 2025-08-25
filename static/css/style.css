@@ -203,68 +203,55 @@ h4 {
 }
 
 
-/* Power Switch */
-.power-control {
+/* Power Button */
+.power-button {
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    border: 3px solid rgba(255, 255, 255, 0.3);
+    background: var(--background-darker);
+    cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: var(--spacing-4);
-    padding: var(--spacing-4);
-}
-
-.switch {
+    transition: all 0.3s ease;
+    margin: 0 auto var(--spacing-4);
     position: relative;
-    display: inline-block;
-    width: 64px;
-    height: 36px;
+    box-shadow: var(--shadow);
 }
 
-.switch input {
-    opacity: 0;
-    width: 0;
-    height: 0;
-}
-
-.slider {
-    position: absolute;
-    cursor: pointer;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: var(--background-darker);
+.power-button svg {
+    width: 50px;
+    height: 50px;
+    stroke: var(--text-secondary);
+    stroke-width: 2;
+    fill: none;
     transition: all 0.3s ease;
-    border-radius: 36px;
-    border: 2px solid rgba(255, 255, 255, 0.1);
 }
 
-.slider:before {
-    position: absolute;
-    content: "";
-    height: 28px;
-    width: 28px;
-    left: 2px;
-    bottom: 2px;
-    background-color: var(--text-secondary);
-    transition: all 0.3s ease;
-    border-radius: 50%;
-    box-shadow: var(--shadow-sm);
+.power-button:hover {
+    transform: scale(1.05);
+    border-color: rgba(255, 255, 255, 0.5);
+    box-shadow: var(--shadow-lg);
 }
 
-input:checked + .slider {
-    background-color: var(--accent-green);
+.power-button:hover svg {
+    stroke: var(--text-primary);
+}
+
+.power-button.active {
+    background: linear-gradient(135deg, var(--accent-green), var(--accent-blue));
     border-color: var(--accent-green);
+    box-shadow: 0 0 30px rgba(156, 182, 143, 0.5);
 }
 
-input:checked + .slider:before {
-    transform: translateX(28px);
-    background-color: white;
+.power-button.active svg {
+    stroke: white;
+    filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.5));
 }
 
-.power-label {
-    font-size: 1.125rem;
-    font-weight: 600;
-    color: var(--text-primary);
+.power-button:active {
+    transform: scale(0.95);
 }
 
 /* Color Picker */
