@@ -23,36 +23,31 @@ A sophisticated WS2812B LED strip controller for Raspberry Pi with web interface
 ## Wiring Diagram
 
 ```
-    Raspberry Pi                     WS2812B LED Strip (600 LEDs)
-    ┌──────────────┐                 ┌─────────────────────────┐
-    │              │                 │                         │
-    │   GPIO 21 ●──┼────────────────►│ DIN (Data In)           │
-    │   (Pin 40)   │                 │                         │
-    │              │                 │                         │
-    │      GND ●───┼────────────────►│ GND                     │
-    │   (Pin 39)   │                 │                         │
-    └──────────────┘                 └─────────────────────────┘
-                                              │
-                                     ┌────────┴────────┐
-                                     │  5V Power Supply │
-                                     │  (external PSU)  │
-                                     │                  │
-                                     │  5V ──► VCC      │
-                                     │  GND ──► GND     │
-                                     └─────────────────┘
+    Raspberry Pi                         WS2812B LED Strip (600 LEDs)
+    ┌──────────────┐                     ┌────────────────────────┐
+    │              │                     │                        │
+    │  GPIO21(40) ─┼─────────────────────┤── DIN                  │
+    │              │                     │                        │
+    │   GND  (39) ─┼────────┬────────────┤── GND                  │
+    │              │        │            │                        │
+    └──────────────┘        │            │   VCC ─────────┐       │
+                            │            └────────────────┼───────┘
+                       ┌────┴─────────────────────────────┴──┐
+                       │  External 5V Power Supply           │
+                       │  (min. 30A for 600 LEDs @ full)     │
+                       └─────────────────────────────────────┘
 
-    Pin Mapping:
-    ┌──────────┬──────────┬─────────────────────────┐
-    │ Pi Pin   │ GPIO     │ Connection              │
-    ├──────────┼──────────┼─────────────────────────┤
-    │ Pin 40   │ GPIO 21  │ WS2812B Data In (DIN)   │
-    │ Pin 39   │ GND      │ WS2812B GND (common)    │
-    └──────────┴──────────┴─────────────────────────┘
+    Config: 800kHz signal · DMA channel 10 · LED channel 0
 
-    Config: 600 LEDs, 800kHz, DMA channel 10, LED channel 0
+    ┌──────────┬──────────┬──────────────────────────────────┐
+    │ Pi Pin   │ GPIO     │ Connection                       │
+    ├──────────┼──────────┼──────────────────────────────────┤
+    │ Pin 40   │ GPIO 21  │ WS2812B Data In (DIN)            │
+    │ Pin 39   │ GND      │ Common ground (Pi + PSU + Strip) │
+    └──────────┴──────────┴──────────────────────────────────┘
 ```
 
-> **Note:** The WS2812B strip requires an external 5V power supply (not from Pi). The Pi and the LED strip must share a common GND. Requires root for DMA/mmap access.
+> **Note:** The WS2812B strip requires an external 5V power supply — do not power from the Pi. All three GND lines (Pi, PSU, strip) must be connected together. Requires root for DMA/mmap access.
 
 ## Quick Start
 
