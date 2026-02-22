@@ -20,6 +20,40 @@ A sophisticated WS2812B LED strip controller for Raspberry Pi with web interface
 - **Hardware PWM** — Smooth LED control using rpi_ws281x library
 - **Persistent Config** — Saves last state and restores on startup
 
+## Wiring Diagram
+
+```
+    Raspberry Pi                     WS2812B LED Strip (600 LEDs)
+    ┌──────────────┐                 ┌─────────────────────────┐
+    │              │                 │                         │
+    │   GPIO 21 ●──┼────────────────►│ DIN (Data In)           │
+    │   (Pin 40)   │                 │                         │
+    │              │                 │                         │
+    │      GND ●───┼────────────────►│ GND                     │
+    │   (Pin 39)   │                 │                         │
+    └──────────────┘                 └─────────────────────────┘
+                                              │
+                                     ┌────────┴────────┐
+                                     │  5V Power Supply │
+                                     │  (external PSU)  │
+                                     │                  │
+                                     │  5V ──► VCC      │
+                                     │  GND ──► GND     │
+                                     └─────────────────┘
+
+    Pin Mapping:
+    ┌──────────┬──────────┬─────────────────────────┐
+    │ Pi Pin   │ GPIO     │ Connection              │
+    ├──────────┼──────────┼─────────────────────────┤
+    │ Pin 40   │ GPIO 21  │ WS2812B Data In (DIN)   │
+    │ Pin 39   │ GND      │ WS2812B GND (common)    │
+    └──────────┴──────────┴─────────────────────────┘
+
+    Config: 600 LEDs, 800kHz, DMA channel 10, LED channel 0
+```
+
+> **Note:** The WS2812B strip requires an external 5V power supply (not from Pi). The Pi and the LED strip must share a common GND. Requires root for DMA/mmap access.
+
 ## Quick Start
 
 ```bash
@@ -43,14 +77,16 @@ sudo python web_controller.py
 | `/api/status` | GET | Current state (power, brightness, effect) |
 | `/api/power` | POST | Toggle power on/off |
 | `/api/brightness` | POST | Set brightness (`{ "value": 0-255 }`) |
+| `/api/speed` | POST | Set effect speed (`{ "speed": 1-100 }`) |
 | `/api/effect` | POST | Set effect (`{ "effect": 0-9 }`) |
+| `/api/color` | POST | Set color (`{ "r": 0-255, "g": 0-255, "b": 0-255 }`) |
 
 ## Tech Stack
 
 - **Backend** — Python 3.11, Flask, Flask-CORS
 - **Frontend** — HTML5 (Jinja2 templates), CSS3, JavaScript
 - **Hardware** — WS2812B LED strip, rpi_ws281x
-- **Process Manager** — PM2
+- **Process Manager** — PM2 (as root)
 
 ## Author
 
