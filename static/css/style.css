@@ -639,3 +639,23 @@ main {
         gap: var(--spacing-3);
     }
 }
+/* ===== MD3 Expressive Motion ===== */
+@keyframes md-enter{0%{opacity:0;transform:translateY(34px) scale(.92)}55%{opacity:1;transform:translateY(-8px) scale(1.02)}78%{transform:translateY(3px) scale(.996)}100%{opacity:1;transform:translateY(0) scale(1)}}
+@keyframes md-drop{0%{opacity:0;transform:translateY(-20px)}100%{opacity:1;transform:translateY(0)}}
+@keyframes md-pulse-ring{0%{box-shadow:0 0 0 0 var(--accent-green)}70%{box-shadow:0 0 0 10px transparent}100%{box-shadow:0 0 0 0 transparent}}
+@keyframes md-breathe{0%,100%{filter:brightness(1)}50%{filter:brightness(1.18)}}
+header,.header,h1{animation:md-drop .55s var(--ease-emph,cubic-bezier(.2,0,0,1)) backwards}
+.control-section{animation:md-enter .64s var(--ease-emph,cubic-bezier(.2,0,0,1)) backwards}
+.control-section:nth-of-type(1){animation-delay:.06s}
+.control-section:nth-of-type(2){animation-delay:.13s}
+.control-section:nth-of-type(3){animation-delay:.2s}
+.control-section:nth-of-type(4){animation-delay:.27s}
+.control-section:nth-of-type(5){animation-delay:.34s}
+.control-section:nth-of-type(6){animation-delay:.41s}
+.status-dot{animation:md-pulse-ring 2.2s ease-out infinite}
+.effect-button.active,.active{animation:md-breathe 2.4s ease-in-out infinite}
+.power-button{transition:transform .4s var(--ease-spring,cubic-bezier(.2,0,0,1)),box-shadow .3s}
+.power-button:active{transform:scale(.9)}
+.control-section:hover{transform:translateY(-3px)}
+.color-preset:hover{transform:scale(1.28) rotate(-8deg)}
+@media(prefers-reduced-motion:reduce){*{animation:none!important}}

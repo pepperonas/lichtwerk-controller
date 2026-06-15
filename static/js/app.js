@@ -1,6 +1,6 @@
 class LichtwerkController {
     constructor() {
-        this.apiBase = '';
+        this.apiBase = '.'
         this.updateInterval = null;
         this.isUpdating = false;
         
