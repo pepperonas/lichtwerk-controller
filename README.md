@@ -1,5 +1,12 @@
 # Lichtwerk LED Controller
 
+> **⚡ Update 2026-06 — Stack & UI**
+>
+> - **Backend:** Python (**rpi_ws281x**, WS2812B 600 LEDs, GPIO 21, DMA) — jetzt als **systemd-Service** `lichtwerk-controller` (root für DMA; war root-PM2).
+> - **UI:** **Material Design 3 Expressive** + Spring-Animationen (gestaffelte Sektionen-Entrance, pulsierende Status-Dots, atmende aktive Effekt-Buttons).
+> - **Deploy:** `git pull && sudo systemctl restart lichtwerk-controller`
+
+
 <div align="center">
 
 ![License](https://img.shields.io/badge/License-MIT-blue.svg)
