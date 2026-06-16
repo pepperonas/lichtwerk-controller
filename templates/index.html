@@ -11,6 +11,86 @@
     <link rel="icon" type="image/png" sizes="16x16" href="static/favicon-16x16.png">
     <link rel="icon" type="image/png" sizes="32x32" href="static/favicon-32x32.png">
     <link rel="apple-touch-icon" sizes="180x180" href="static/apple-touch-icon.png">
+    <style>
+    /* MD3 Expressive Animations (2026-06-16) */
+    :root {
+        --md-ease-spatial: linear(0,0.009 1.2%,0.035 2.5%,0.158 6%,0.793 18.4%,0.984 23%,1.07 27%,1.104 31.5%,1.103 35%,1.07 41%,1.013 50%,0.991 57%,0.998 75%,1);
+        --md-ease-effects: cubic-bezier(0.2,0,0,1);
+    }
+    @keyframes md-enter { from{opacity:0;transform:translateY(24px) scale(.96)} to{opacity:1;transform:none} }
+    @keyframes md-breathe { 0%,100%{box-shadow:0 0 0 0 rgba(170,199,255,0)} 50%{box-shadow:0 0 26px 2px rgba(170,199,255,.35)} }
+    @keyframes md-pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.45;transform:scale(.7)} }
+
+    /* Staggered card / panel entrance */
+    .control-section { animation: md-enter .5s var(--md-ease-spatial) backwards; }
+    .control-section:nth-child(1) { animation-delay: .04s; }
+    .control-section:nth-child(2) { animation-delay: .10s; }
+    .control-section:nth-child(3) { animation-delay: .16s; }
+    .control-section:nth-child(4) { animation-delay: .22s; }
+    .control-section:nth-child(5) { animation-delay: .28s; }
+    .control-section:nth-child(6) { animation-delay: .34s; }
+
+    /* Buttons: effect / color presets / power */
+    .effect-btn,
+    .color-preset,
+    .power-button {
+        transition: transform .4s var(--md-ease-spatial),
+                    box-shadow .2s var(--md-ease-effects),
+                    filter .2s var(--md-ease-effects);
+    }
+    .effect-btn:active,
+    .color-preset:active,
+    .power-button:active { transform: scale(.95); }
+    .effect-btn:hover,
+    .color-preset:hover,
+    .power-button:hover { transform: translateY(-2px); filter: brightness(1.06); }
+
+    /* Active effect highlighted with a breathing glow */
+    .effect-btn.active { animation: md-breathe 2.6s ease-in-out infinite; }
+
+    /* Connection / status dot pulses */
+    .status-dot { animation: md-pulse 2s ease-in-out infinite; }
+
+    /* Range slider thumbs spring on change */
+    input[type="range"]::-webkit-slider-thumb { transition: transform .5s var(--md-ease-spatial); }
+    input[type="range"]::-moz-range-thumb { transition: transform .5s var(--md-ease-spatial); }
+
+    @media (prefers-reduced-motion: reduce) {
+        .control-section,
+        .effect-btn,
+        .color-preset,
+        .power-button,
+        .effect-btn.active,
+        .status-dot,
+        input[type="range"]::-webkit-slider-thumb,
+        input[type="range"]::-moz-range-thumb {
+            animation: none !important;
+            transition: none !important;
+        }
+    }
+
+    /* ===== Obsessive-Detail Politur (2026-06-16) — additiv, kein Umbau =====
+       Klammer: tonale MD3-Flächen, die unter dem Cursor Licht fangen. ===== */
+    :root{ --ease-quick:cubic-bezier(.2,0,0,1); }
+    button:focus-visible,a[href]:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,[role="button"]:focus-visible,[tabindex]:not([tabindex="-1"]):focus-visible{
+      outline:2px solid var(--accent-blue, var(--md-primary, var(--primary, #aac7ff)))!important; outline-offset:3px!important;
+    }
+    button:focus:not(:focus-visible),a:focus:not(:focus-visible),[role="button"]:focus:not(:focus-visible){ outline:none; }
+    h1,h2,h3{ text-wrap:balance; }
+    @media (pointer:coarse){ button,.btn,[role="button"]{ min-height:44px; } }
+    @media (hover:hover) and (pointer:fine){
+      .control-section{ position:relative; }
+      .control-section::after{ content:""; position:absolute; inset:0; border-radius:inherit; pointer-events:none;
+        opacity:0; transition:opacity 240ms var(--ease-quick);
+        background:radial-gradient(340px circle at var(--mx,50%) var(--my,50%),
+          color-mix(in srgb, var(--accent-blue, var(--md-primary, var(--primary,#aac7ff))) 13%, transparent), transparent 60%); }
+      .control-section:hover::after{ opacity:1; }
+    }
+    @media (prefers-reduced-motion: reduce){
+      *,*::before,*::after{ animation-duration:.01ms!important; animation-iteration-count:1!important; transition-duration:.01ms!important; scroll-behavior:auto!important; }
+      .control-section::after{ display:none!important; }
+    }
+    </style>
 </head>
 <body>
     <div class="container">
@@ -153,5 +233,18 @@
     </div>
 
     <script src="static/js/app.js"></script>
+<script>/* cursor-sheen (gated, rAF-throttled, additiv) */
+(function(){try{
+  if(!matchMedia('(hover:hover) and (pointer:fine)').matches) return;
+  if(matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  var sel='.control-section',el=null,x=0,y=0,q=false;
+  function f(){q=false;if(!el)return;var r=el.getBoundingClientRect();
+    el.style.setProperty('--mx',((x-r.left)/r.width*100)+'%');
+    el.style.setProperty('--my',((y-r.top)/r.height*100)+'%');}
+  document.addEventListener('pointermove',function(e){
+    var c=e.target.closest?e.target.closest(sel):null;el=c;x=e.clientX;y=e.clientY;
+    if(c&&!q){q=true;requestAnimationFrame(f);}
+  },{passive:true});
+}catch(_){}})();</script>
 </body>
 </html>
