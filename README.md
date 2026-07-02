@@ -9,10 +9,17 @@
 
 <div align="center">
 
-![License](https://img.shields.io/badge/License-MIT-blue.svg)
-![Python](https://img.shields.io/badge/Python-3.11-3776AB.svg?logo=python&logoColor=white)
-![Flask](https://img.shields.io/badge/Flask-3.0-000000.svg?logo=flask&logoColor=white)
-![Platform](https://img.shields.io/badge/Platform-Raspberry%20Pi-C51A4A.svg?logo=raspberrypi&logoColor=white)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.11-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
+[![Flask](https://img.shields.io/badge/Flask-3.0-000000.svg?logo=flask&logoColor=white)](https://flask.palletsprojects.com/)
+[![Platform](https://img.shields.io/badge/Platform-Raspberry%20Pi-C51A4A.svg?logo=raspberrypi&logoColor=white)](https://www.raspberrypi.com/)
+[![Hardware](https://img.shields.io/badge/Hardware-WS2812B-FF6600.svg?logo=adafruit&logoColor=white)](https://cdn-shop.adafruit.com/datasheets/WS2812B.pdf)
+[![LEDs](https://img.shields.io/badge/LEDs-600-FFD700.svg?logo=sparkfun&logoColor=white)](https://www.sparkfun.com/)
+[![Library](https://img.shields.io/badge/Library-rpi__ws281x-CC0000.svg?logo=github&logoColor=white)](https://github.com/jgarff/rpi_ws281x)
+[![Managed by](https://img.shields.io/badge/Managed%20by-systemd-0A7BBB.svg?logo=linux&logoColor=white)](https://systemd.io/)
+[![Tests](https://img.shields.io/badge/Tests-42%20passed-brightgreen.svg?logo=pytest&logoColor=white)](tests/)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/pepperonas/lichtwerk-controller/pulls)
+[![Made with ❤️](https://img.shields.io/badge/Made%20with-%E2%9D%A4%EF%B8%8F-red.svg)](https://celox.io)
 
 A sophisticated WS2812B LED strip controller for Raspberry Pi with web interface, featuring multiple animated effects and real-time brightness control.
 
@@ -88,11 +95,36 @@ sudo python web_controller.py
 - **Backend** — Python 3.11, Flask, Flask-CORS
 - **Frontend** — HTML5 (Jinja2 templates), CSS3, JavaScript
 - **Hardware** — WS2812B LED strip, rpi_ws281x
-- **Process Manager** — PM2 (as root)
+- **Process Manager** — systemd (as root, required for DMA)
 
 ## Author
 
 **Martin Pfeffer** — [celox.io](https://celox.io)
+
+## Tests
+
+Pure-function unit tests live in `tests/test_pure.py`. They run on any machine (Mac, Linux CI, the Pi itself) — hardware is mocked via `unittest.mock`, so no GPIO or rpi_ws281x library is required.
+
+```bash
+# Install dev dependency
+pip install -r requirements-dev.txt
+
+# Run all tests
+pytest tests/ -v
+```
+
+**Coverage (42 assertions across 7 test classes):**
+
+| Class | Functions under test |
+|---|---|
+| `TestWheel` | `wheel()` — hue-wheel colour formula, boundary values, all-256 range check |
+| `TestBrightnessScaling` | `set_pixel()` brightness multiplication, int truncation |
+| `TestClamp` | `set_brightness` + `set_speed` endpoint clamping logic |
+| `TestHsvToRgb` | `hsv_to_rgb()` — red, green, blue, black, white |
+| `TestFadeTowardColor` | `fade_toward_color()` — up/down fade, overshoot guard, already-at-target |
+| `TestFirePalette` | Fire-effect heat→colour palette (black→red→yellow→white), clamp guards |
+| `TestSpeedToSleep` | `start_effect_loop` sleep-time formula, floor enforcement |
+| `TestValidEffects` | Effect name registry — count, names, no duplicates |
 
 ## License
 
