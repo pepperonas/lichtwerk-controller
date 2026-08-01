@@ -605,7 +605,7 @@ class LichtwerkWebController:
         Timing:
           1) Engage double-pulse (class applied → hard snap)
           2) Sustain square flash @ body-transition period (.55s), ~65% duty
-          3) On each ON edge: ~12 white LED sparks for ~40 ms only
+          3) On each ON edge: dense white LED sparks for ~55 ms
         Local ~60 fps — no HTTP frame spam from disco.
         """
         if not self.strip:
@@ -636,8 +636,8 @@ class LichtwerkWebController:
 
         last = self.effect_params.get('iris_lit')
         if lit and last is not True:
-            # Rising edge → arm a ~40 ms white-spark window
-            self.effect_params['iris_spark_until'] = t + 0.04
+            # Rising edge → arm a ~55 ms white-spark window
+            self.effect_params['iris_spark_until'] = t + 0.055
         spark = bool(lit and t < float(self.effect_params.get('iris_spark_until') or 0))
         last_spark = self.effect_params.get('iris_sparking')
         if last is lit and last_spark is spark:
@@ -659,7 +659,10 @@ class LichtwerkWebController:
                 self.strip.setPixelColor(i, c)
         if spark and n > 0:
             w = Color(int(255 * scale), int(255 * scale), int(255 * scale))
-            k = min(12, max(3, n // 50))
+            # ~8% of strip (was ~12 LEDs) — never more than n
+            k = min(n, min(80, max(24, n // 12)))
+            if k < 1:
+                k = 1
             rng = random.Random(int(t0 * 1000) ^ int(t * 200))
             for i in rng.sample(range(n), k):
                 self.strip.setPixelColor(i, w)

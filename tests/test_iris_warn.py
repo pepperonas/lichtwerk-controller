@@ -118,11 +118,19 @@ def _iris_frame(strip, effect_params, brightness, now):
         strip.setPixelColor(i, c)
     if spark and n > 0:
         w = Color(int(255 * scale), int(255 * scale), int(255 * scale))
-        k = min(12, max(3, n // 50))
+        k = min(n, min(80, max(24, n // 12)))
+        if k < 1:
+            k = 1
         rng = random.Random(int(t0 * 1000) ^ int(t * 200))
         for i in rng.sample(range(n), k):
             strip.setPixelColor(i, w)
     strip.show()
+
+
+def test_iris_spark_density_contract():
+    src = (_ROOT / "web_controller.py").read_text()
+    assert "min(80, max(24, n // 12))" in src
+    assert "0.055" in src
 
 
 def test_effect_iris_warn_paints_and_clears():

@@ -42,7 +42,7 @@ Disco **Strip-Warn** starts this effect while reported SPL exceeds the shared **
 
 1. Engage: two hard full-strip crimson pulses (~210 ms)
 2. Sustain: square wave, period 0.55 s, ~65 % ON — full `(255,70,55)` vs black (no soft glow)
-3. Each ON edge: ~12 random white LEDs for ~40 ms (lightning accent)
+3. Each ON edge: **~50–80 white LEDs** (~8 % of strip, was ~12) for ~55 ms — denser lightning accent
 4. **Latency:** disco posts **once** (`POST /api/effect {"effect":"iris_warn"}`); this handler sets `power=True`, `bri=255`, and paints the **first frame before the HTTP response returns**. Effect loop wakes via Event (~8 ms). `pio_strip` keeps `/dev/leds0` open.
 
 ```bash
