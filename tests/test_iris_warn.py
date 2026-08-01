@@ -71,7 +71,11 @@ def test_web_controller_registers_iris_warn():
 
 def test_web_controller_iris_fps_sleep():
     src = (_ROOT / "web_controller.py").read_text()
-    assert "0.016" in src  # ~60 fps
+    assert "0.008" in src  # ~125 Hz edge poll
+    assert "wake_effect" in src
+    assert "/api/solid" in src
+    assert "threaded=True" in src
+    assert "run_effect()" in src  # first-frame paint in iris_warn handler
 
 
 def _iris_frame(strip, effect_params, brightness, now):

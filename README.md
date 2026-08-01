@@ -1,11 +1,11 @@
 # Lichtwerk LED Controller
 
-> **⚡ Update 2026-08-01 — Pi 5 + Iris-Warn**
+> **⚡ Update 2026-08-01 — Pi 5 + Iris-Warn + Low-Latency**
 >
 > - **Host:** Live auf **raspi5** (`192.168.178.105`), GPIO **21**, Overlay `dtoverlay=ws2812-pio,gpio=21,num_leds=600,brightness=255` → `/dev/leds0`.
-> - **Driver:** `pio_strip.py` (Kernel-PIO) mit Fallback auf `rpi_ws281x` (Pi 3 / rpi_ws281x). Kernel-Brightness-Byte = Multiplier 0–255 (nie 0 schreiben).
-> - **Effekt `iris_warn`:** harter Crimson↔Schwarz-Square-Blitz (~60 fps) für Disco **Strip-Warn** (feuert ab der geteilten `warn_thr`-Schwelle, Default **55 dB SPL** — nicht die Iris-~70‑Marke). Engage-Doppelpuls + ~65 % Duty @ 0,55 s; kurze **Weiß-Sparks** (~12 LEDs, ~40 ms) an jeder ON-Kante. Kein HTTP-Frame-Spam von disco.
-> - **UI:** Material Design 3 Expressive + shared App-Nav (`/shared/nav.js`).
+> - **Driver:** `pio_strip.py` hält `/dev/leds0` **offen** (kein open/close pro Frame) + `fill()`; Fallback `rpi_ws281x`.
+> - **Effekt `iris_warn`:** harter Crimson↔Schwarz-Blitz für Disco **Strip-Warn** (`warn_thr`, Default **55 dB**). `/api/effect iris_warn` **auto-power + First-Frame im Request**; Loop wake via Event (~8 ms). Idle-`clear()` skippt wenn schon dunkel.
+> - **API:** `POST /api/solid` = power+RGB+bri in **einem** RTT (Disco-Sync). Flask `threaded=True`.
 > - **Deploy:** `git pull && sudo systemctl restart lichtwerk-controller`
 
 
@@ -19,7 +19,7 @@
 [![LEDs](https://img.shields.io/badge/LEDs-600-FFD700.svg?logo=sparkfun&logoColor=white)](https://www.sparkfun.com/)
 [![Library](https://img.shields.io/badge/Library-rpi__ws281x-CC0000.svg?logo=github&logoColor=white)](https://github.com/jgarff/rpi_ws281x)
 [![Managed by](https://img.shields.io/badge/Managed%20by-systemd-0A7BBB.svg?logo=linux&logoColor=white)](https://systemd.io/)
-[![Tests](https://img.shields.io/badge/Tests-58%20passed-brightgreen.svg?logo=pytest&logoColor=white)](tests/)
+[![Tests](https://img.shields.io/badge/Tests-60%20passed-brightgreen.svg?logo=pytest&logoColor=white)](tests/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/pepperonas/lichtwerk-controller/pulls)
 [![Made with ❤️](https://img.shields.io/badge/Made%20with-%E2%9D%A4%EF%B8%8F-red.svg)](https://celox.io)
 
@@ -43,11 +43,13 @@ Disco **Strip-Warn** starts this effect while reported SPL exceeds the shared **
 1. Engage: two hard full-strip crimson pulses (~210 ms)
 2. Sustain: square wave, period 0.55 s, ~65 % ON — full `(255,70,55)` vs black (no soft glow)
 3. Each ON edge: ~12 random white LEDs for ~40 ms (lightning accent)
-4. Loop runs locally at ~60 fps; disco only POSTs `power`/`effect` once
+4. **Latency:** disco posts **once** (`POST /api/effect {"effect":"iris_warn"}`); this handler sets `power=True`, `bri=255`, and paints the **first frame before the HTTP response returns**. Effect loop wakes via Event (~8 ms). `pio_strip` keeps `/dev/leds0` open.
 
 ```bash
-curl -X POST http://127.0.0.1:5006/api/power -H 'Content-Type: application/json' -d '{"power":true}'
 curl -X POST http://127.0.0.1:5006/api/effect -H 'Content-Type: application/json' -d '{"effect":"iris_warn"}'
+# Disco color sync (one RTT):
+curl -X POST http://127.0.0.1:5006/api/solid -H 'Content-Type: application/json' \
+  -d '{"power":true,"r":255,"g":70,"b":55,"brightness":255}'
 ```
 
 Valid effects include: `solid`, `rainbow`, `pulse`, `chase`, `sparkle`, `strobe`, `meteor`, `breathe`, `sinelon`, `juggle`, `theater`, `gradient`, `fire`, **`iris_warn`**.
@@ -131,13 +133,13 @@ pip install -r requirements-dev.txt
 pytest tests/ -v
 ```
 
-**Coverage (58 tests):**
+**Coverage (60 tests):**
 
 | Suite | Fokus |
 |---|---|
 | `test_pure.py` | `wheel`, brightness, HSV, fade, fire palette, speed→sleep, effect registry |
-| `test_pio_strip.py` | Pi-5 `pio_strip.Color`/`PixelStrip` buffer, brightness scale, missing `/dev/leds0` |
-| `test_iris_warn.py` | `iris_warn` timing (engage double-pulse, 65 % duty), paint/clear, README/source contracts |
+| `test_pio_strip.py` | FD reuse across `show()`, `fill()`, brightness scale, missing device |
+| `test_iris_warn.py` | timing, paint/clear, `/api/solid` + wake + first-frame contracts |
 
 ## License
 

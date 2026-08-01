@@ -60,6 +60,8 @@ class LichtwerkWebController:
             'breathe_direction': 1,
             'breathe_brightness': 0.1
         }
+        self._cleared = False          # skip redundant black show() when already dark
+        self._effect_wake = threading.Event()
         
         signal.signal(signal.SIGINT, self.signal_handler)
         signal.signal(signal.SIGTERM, self.signal_handler)
@@ -69,15 +71,31 @@ class LichtwerkWebController:
     def signal_handler(self, sig, frame):
         print('\nShutting down...')
         self.running = False
+        self._effect_wake.set()
         self.clear()
+        if self.strip and hasattr(self.strip, 'close'):
+            try:
+                self.strip.close()
+            except Exception:
+                pass
         sys.exit(0)
     
-    def clear(self):
+    def clear(self, force=False):
         if not self.strip:
             return
-        for i in range(self.strip.numPixels()):
-            self.strip.setPixelColor(i, Color(0, 0, 0))
+        if self._cleared and not force:
+            return
+        if hasattr(self.strip, 'fill'):
+            self.strip.fill(Color(0, 0, 0))
+        else:
+            for i in range(self.strip.numPixels()):
+                self.strip.setPixelColor(i, Color(0, 0, 0))
         self.strip.show()
+        self._cleared = True
+    
+    def wake_effect(self):
+        """Interrupt effect-loop sleep so the next frame paints ASAP."""
+        self._effect_wake.set()
     
     def set_pixel(self, index, r, g, b, brightness=1.0):
         if not self.strip:
@@ -109,9 +127,15 @@ class LichtwerkWebController:
     def effect_solid(self):
         if not self.strip:
             return
-        for i in range(self.strip.numPixels()):
-            self.set_pixel(i, self.color[0], self.color[1], self.color[2])
+        scale = max(0.0, min(1.0, self.brightness / 255.0))
+        c = Color(int(self.color[0] * scale), int(self.color[1] * scale), int(self.color[2] * scale))
+        if hasattr(self.strip, 'fill'):
+            self.strip.fill(c)
+        else:
+            for i in range(self.strip.numPixels()):
+                self.strip.setPixelColor(i, c)
         self.strip.show()
+        self._cleared = False
     
     def effect_rainbow(self):
         if not self.strip:
@@ -628,8 +652,11 @@ class LichtwerkWebController:
         scale = max(0.0, min(1.0, self.brightness / 255.0))
         c = Color(int(hr * scale), int(hg * scale), int(hb * scale))
         n = self.strip.numPixels()
-        for i in range(n):
-            self.strip.setPixelColor(i, c)
+        if hasattr(self.strip, 'fill'):
+            self.strip.fill(c)
+        else:
+            for i in range(n):
+                self.strip.setPixelColor(i, c)
         if spark and n > 0:
             w = Color(int(255 * scale), int(255 * scale), int(255 * scale))
             k = min(12, max(3, n // 50))
@@ -637,6 +664,7 @@ class LichtwerkWebController:
             for i in rng.sample(range(n), k):
                 self.strip.setPixelColor(i, w)
         self.strip.show()
+        self._cleared = False
 
     def run_effect(self):
         if not self.power:
@@ -662,20 +690,23 @@ class LichtwerkWebController:
         
         if self.current_effect in effects:
             effects[self.current_effect]()
-    
-    def start_effect_loop(self):
+            # Non-iris effects always leave the strip potentially lit
+            if self.current_effect != 'iris_warn':
+                self._cleared = False
         def effect_loop():
             while self.running:
                 try:
                     self.run_effect()
                     if self.current_effect == 'iris_warn':
-                        sleep_time = 0.016  # ~60 fps — match UI smoothness
+                        sleep_time = 0.008  # ~125 Hz poll — edges land within ~8 ms
                     else:
                         sleep_time = max(0.01, (101 - self.speed) / 1000.0)
-                    time.sleep(sleep_time)
+                    # Interruptible sleep: API changes paint on the next wake
+                    self._effect_wake.wait(timeout=sleep_time)
+                    self._effect_wake.clear()
                 except Exception as e:
                     print(f"Effect error: {e}")
-                    time.sleep(0.1)
+                    time.sleep(0.05)
         
         if self.effect_thread and self.effect_thread.is_alive():
             return
@@ -712,29 +743,31 @@ def get_status():
 
 @app.route('/api/power', methods=['POST'])
 def set_power():
-    data = request.get_json()
+    data = request.get_json() or {}
     controller.power = bool(data.get('power', False))
     if not controller.power:
-        controller.clear()
+        controller.clear(force=True)
+    controller.wake_effect()
     return jsonify({'status': 'ok', 'power': controller.power})
 
 @app.route('/api/brightness', methods=['POST'])
 def set_brightness():
-    data = request.get_json()
+    data = request.get_json() or {}
     brightness = int(data.get('brightness', 100))
     controller.brightness = max(0, min(255, brightness))
+    controller.wake_effect()
     return jsonify({'status': 'ok', 'brightness': controller.brightness})
 
 @app.route('/api/speed', methods=['POST'])
 def set_speed():
-    data = request.get_json()
+    data = request.get_json() or {}
     speed = int(data.get('speed', 50))
     controller.speed = max(1, min(100, speed))
     return jsonify({'status': 'ok', 'speed': controller.speed})
 
 @app.route('/api/effect', methods=['POST'])
 def set_effect():
-    data = request.get_json()
+    data = request.get_json() or {}
     effect = data.get('effect', 'solid')
     valid_effects = ['solid', 'rainbow', 'pulse', 'chase', 'sparkle', 'strobe', 'meteor', 'breathe', 'sinelon', 'juggle', 'theater', 'gradient', 'fire', 'iris_warn']
     
@@ -777,26 +810,66 @@ def set_effect():
             controller.effect_params['iris_lit'] = None
             controller.effect_params['iris_sparking'] = None
             controller.effect_params['iris_spark_until'] = 0.0
-            # Full punch — page wash uses opacity, strip uses max global brightness
+            # Full punch + auto-power: one POST from disco engages the strip
             controller.brightness = 255
+            controller.power = True
+            # Paint first frame in-request → LED lights before HTTP returns
+            try:
+                controller.run_effect()
+            except Exception as e:
+                print(f"iris_warn first frame: {e}")
 
-            
-        return jsonify({'status': 'ok', 'effect': controller.current_effect})
+        controller.wake_effect()
+        return jsonify({'status': 'ok', 'effect': controller.current_effect, 'power': controller.power})
     else:
         return jsonify({'status': 'error', 'message': 'Invalid effect'}), 400
 
 @app.route('/api/color', methods=['POST'])
 def set_color():
-    data = request.get_json()
+    data = request.get_json() or {}
     r = max(0, min(255, int(data.get('r', 255))))
     g = max(0, min(255, int(data.get('g', 255))))
     b = max(0, min(255, int(data.get('b', 255))))
     controller.color = [r, g, b]
+    controller.wake_effect()
     return jsonify({'status': 'ok', 'color': {'r': r, 'g': g, 'b': b}})
+
+@app.route('/api/solid', methods=['POST'])
+def set_solid():
+    """One-shot disco sync: power + solid effect + RGB + brightness in a single RTT."""
+    data = request.get_json() or {}
+    if 'r' in data or 'g' in data or 'b' in data:
+        r = max(0, min(255, int(data.get('r', controller.color[0]))))
+        g = max(0, min(255, int(data.get('g', controller.color[1]))))
+        b = max(0, min(255, int(data.get('b', controller.color[2]))))
+        controller.color = [r, g, b]
+    if 'brightness' in data:
+        controller.brightness = max(0, min(255, int(data.get('brightness'))))
+    if 'power' in data:
+        controller.power = bool(data.get('power'))
+        if not controller.power:
+            controller.clear(force=True)
+            controller.wake_effect()
+            return jsonify({'status': 'ok', 'power': False})
+    else:
+        controller.power = True
+    controller.current_effect = 'solid'
+    try:
+        controller.effect_solid()
+    except Exception as e:
+        print(f"solid paint: {e}")
+    controller.wake_effect()
+    return jsonify({
+        'status': 'ok',
+        'power': controller.power,
+        'effect': 'solid',
+        'color': {'r': controller.color[0], 'g': controller.color[1], 'b': controller.color[2]},
+        'brightness': controller.brightness,
+    })
 
 @app.route('/api/theater_mode', methods=['POST'])
 def set_theater_mode():
-    data = request.get_json()
+    data = request.get_json() or {}
     rainbow = data.get('rainbow', True)
     controller.theater_rainbow = bool(rainbow)
     return jsonify({'status': 'ok', 'theater_rainbow': controller.theater_rainbow})
@@ -806,4 +879,5 @@ if __name__ == '__main__':
     led_count = controller.strip.numPixels() if controller.strip else 50
     print(f"LEDs: {led_count} on GPIO {controller.config['led_config']['pin']} (Demo Mode: {not controller.strip})")
     print("Web interface: http://localhost:5006")
-    app.run(host='0.0.0.0', port=5006, debug=False)
+    # threaded=True: disco warn_flash + sync don't serialize behind each other
+    app.run(host='0.0.0.0', port=5006, debug=False, threaded=True)
