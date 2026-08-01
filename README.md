@@ -1,9 +1,11 @@
 # Lichtwerk LED Controller
 
-> **⚡ Update 2026-06 — Stack & UI**
+> **⚡ Update 2026-08-01 — Pi 5 + Iris-Warn**
 >
-> - **Backend:** Python (**rpi_ws281x**, WS2812B 600 LEDs, GPIO 21, DMA) — jetzt als **systemd-Service** `lichtwerk-controller` (root für DMA; war root-PM2).
-> - **UI:** **Material Design 3 Expressive** + Spring-Animationen (gestaffelte Sektionen-Entrance, pulsierende Status-Dots, atmende aktive Effekt-Buttons).
+> - **Host:** Live auf **raspi5** (`192.168.178.105`), GPIO **21**, Overlay `dtoverlay=ws2812-pio,gpio=21,num_leds=600,brightness=255` → `/dev/leds0`.
+> - **Driver:** `pio_strip.py` (Kernel-PIO) mit Fallback auf `rpi_ws281x` (Pi 3 / rpi_ws281x). Kernel-Brightness-Byte = Multiplier 0–255 (nie 0 schreiben).
+> - **Effekt `iris_warn`:** harter Crimson↔Schwarz-Square-Blitz (~60 fps) für Disco **Strip-Warn** (Iris ~70 dB). Engage-Doppelpuls + ~65 % Duty @ 0,55 s; kurze **Weiß-Sparks** (~12 LEDs, ~40 ms) an jeder ON-Kante. Kein HTTP-Frame-Spam von disco.
+> - **UI:** Material Design 3 Expressive + shared App-Nav (`/shared/nav.js`).
 > - **Deploy:** `git pull && sudo systemctl restart lichtwerk-controller`
 
 
@@ -27,12 +29,28 @@ A sophisticated WS2812B LED strip controller for Raspberry Pi with web interface
 
 ## Features
 
-- **10+ Effects** — Rainbow, breathing, fire, sparkle, color wipe, theater chase, and more
+- **10+ Effects** — Rainbow, breathing, fire, sparkle, chase, theater, meteor, **iris_warn** (Strip-Warn), and more
 - **Web Dashboard** — Control effects, brightness, and power from any device
-- **REST API** — Full programmatic control for home automation integration
+- **REST API** — Full programmatic control for home automation / disco Strip-Warn
+- **Pi 5 PIO path** — `pio_strip.py` → `/dev/leds0` (ws2812-pio overlay); rpi_ws281x fallback
 - **Real-time Control** — Instant brightness and effect changes via responsive UI
-- **Hardware PWM** — Smooth LED control using rpi_ws281x library
-- **Persistent Config** — Saves last state and restores on startup
+- **Persistent Config** — Saves last state and restores on startup (`config.json`)
+
+## Iris-Warn (`iris_warn`)
+
+Disco **Strip-Warn** starts this effect while the mic exceeds Iris (~70 dB SPL / `DISCO_LOUD_MARK_DB=-20`):
+
+1. Engage: two hard full-strip crimson pulses (~210 ms)
+2. Sustain: square wave, period 0.55 s, ~65 % ON — full `(255,70,55)` vs black (no soft glow)
+3. Each ON edge: ~12 random white LEDs for ~40 ms (lightning accent)
+4. Loop runs locally at ~60 fps; disco only POSTs `power`/`effect` once
+
+```bash
+curl -X POST http://127.0.0.1:5006/api/power -H 'Content-Type: application/json' -d '{"power":true}'
+curl -X POST http://127.0.0.1:5006/api/effect -H 'Content-Type: application/json' -d '{"effect":"iris_warn"}'
+```
+
+Valid effects include: `solid`, `rainbow`, `pulse`, `chase`, `sparkle`, `strobe`, `meteor`, `breathe`, `sinelon`, `juggle`, `theater`, `gradient`, `fire`, **`iris_warn`**.
 
 ## Wiring Diagram
 
@@ -94,8 +112,8 @@ sudo python web_controller.py
 
 - **Backend** — Python 3.11, Flask, Flask-CORS
 - **Frontend** — HTML5 (Jinja2 templates), CSS3, JavaScript
-- **Hardware** — WS2812B LED strip, rpi_ws281x
-- **Process Manager** — systemd (as root, required for DMA)
+- **Hardware** — WS2812B LED strip; Pi 5 via `ws2812-pio` / `pio_strip.py`, else rpi_ws281x
+- **Process Manager** — systemd `lichtwerk-controller` (live: raspi5)
 
 ## Author
 

@@ -4,126 +4,60 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Lichtwerk LED Controller - A Raspberry Pi-based WS2812B LED strip controller with web interface for controlling 600 LEDs with various effects. 
+Lichtwerk LED Controller — Raspberry Pi WS2812B strip (600 LEDs) with Flask UI/API on port **5006**.
+
+**Live (2026-08-01):** **raspi5** (`192.168.178.105`), systemd `lichtwerk-controller`, GPIO **21**, kernel overlay:
+
+```
+dtoverlay=ws2812-pio,gpio=21,num_leds=600,brightness=255
+```
+
+Device node: `/dev/leds0`. Driver module: `pio_strip.py` (preferred on Pi 5). Fallback: `rpi_ws281x` when `pio_strip` is absent (older Pi / DMA path).
+
+**Important:** Kernel brightness write is a **0–255 multiplier**. Never write `0` on begin (strip stays dark). App sets `brightness=255` when selecting `iris_warn`.
 
 ## Architecture
 
-Two main Python applications:
-- **controller.py**: Standalone LED controller that runs effects directly
-- **web_controller.py**: Flask-based web server with real-time LED control (port 5006)
+- **`web_controller.py`**: Flask server + effect loop (port 5006). Production entrypoint.
+- **`pio_strip.py`**: PixelStrip/Color compatible with rpi_ws281x API → writes RGBW u32 frames to `/dev/leds0`.
+- **`controller.py`**: CLI/standalone effects (legacy/dev).
+- Demo mode if strip init fails (no hardware).
 
-Both use rpi_ws281x library and require sudo/root access for GPIO operations. Demo mode activates automatically when hardware is unavailable.
+## Iris-Warn (`effect_iris_warn`)
+
+Used by **disco-controller Strip-Warn** (`warn_hue` API key). Hard crimson↔black square blitz + brief white sparks. See README. Disco owns start/stop; do not restore prior disco solid scene when Strip-Warn abandons (`LichtwerkClient.abandon`).
 
 ## Key Commands
 
-### Installation
 ```bash
-# Full install with LED libraries
-./install.sh
+# Pi 5 overlay (once, in /boot/firmware/config.txt)
+dtoverlay=ws2812-pio,gpio=21,num_leds=600,brightness=255
 
-# Quick install (Flask dependencies only)
-./install_fast.sh
+# Service
+ssh raspi5 'cd /home/pi/apps/lichtwerk-controller && git pull && sudo systemctl restart lichtwerk-controller'
+ssh raspi5 'sudo journalctl -u lichtwerk-controller -f'
 
-# Manual install
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+# Smoke iris_warn
+curl -s -X POST http://127.0.0.1:5006/api/power -H 'Content-Type: application/json' -d '{"power":true}'
+curl -s -X POST http://127.0.0.1:5006/api/effect -H 'Content-Type: application/json' -d '{"effect":"iris_warn"}'
 ```
 
-### Development & Testing
+### Tests
+
 ```bash
-# Test LEDs (requires sudo)
-sudo venv/bin/python test_leds.py
-
-# Run standalone controller
-sudo venv/bin/python controller.py --effect rainbow
-sudo venv/bin/python controller.py --effect meteor
-
-# Run web controller directly
-sudo python3 web_controller.py
-
-# Debug hardware issues  
-./debug_hardware.sh
-
-# Test alternative GPIO pins
-sudo python3 test_gpio.py 10  # SPI Pin 19
-sudo python3 test_gpio.py 12  # PWM Pin 32
-sudo python3 test_gpio.py 21  # PCM Pin 40
+# Unit tests (no hardware)
+python -m pytest tests/ -q
 ```
 
-### PM2 Process Management
-```bash
-# Start/restart/stop
-pm2 start ecosystem.config.js
-pm2 restart lichtwerk-controller
-pm2 stop lichtwerk-controller
+### Legacy PM2
 
-# Logs and status
-pm2 logs lichtwerk-controller
-pm2 status
+PM2/`ecosystem.config.js` is obsolete — use systemd. Root may still be required on classic rpi_ws281x/DMA hosts; on Pi 5 + pio overlay the service typically runs as `pi` with access to `/dev/leds0`.
 
-# Save configuration for auto-restart on boot
-pm2 save
-pm2 startup systemd -u pi --hp /home/pi
-```
+## GPIO
 
-### Troubleshooting Common Issues
-```bash
-# Port 5006 already in use
-pm2 delete all
-sudo pkill -f web_controller
+| Pin | GPIO | Function |
+|-----|------|----------|
+| 40 | 21 | WS2812B DIN |
+| 39 | GND | Common ground with external 5 V PSU |
 
-# Check for audio module conflicts (GPIO 18)
-lsmod | grep snd_bcm2835
-sudo modprobe -r snd_bcm2835  # Disable if present
-
-# Check SPI status (GPIO 10)
-ls /dev/spidev0.0  # Should exist if SPI enabled
-```
-
-## Configuration
-
-**config.json** controls:
-- GPIO pin 21 (default), 600 LEDs
-- Brightness limit (100/255) to prevent power overload  
-- Effect parameters for rainbow, solid, pulse, chase, sparkle, strobe, meteor, breathe
-
-**ecosystem.config.js** defines PM2 settings:
-- Python3 interpreter
-- Auto-restart on failure (max 10 restarts)
-- 200MB memory limit
-- Log rotation in ./logs/
-
-## API Endpoints
-
-- `GET /` - Web interface
-- `GET /api/status` - Current LED status and settings
-- `POST /api/control` - Update settings (power, brightness, speed, color, effect)
-
-## Hardware Notes
-
-- **GPIO 21** (Pin 40) → LED data input
-- **Power**: 600 LEDs can draw 36A at 5V (180W) - brightness limited to prevent overload
-- **Common ground** required between Pi and LED power supply
-- **Wiring direction**: Data flows DIN → DOUT (check arrow on strip)
-
-## Adding New Effects
-
-Add to web_controller.py:
-```python
-def effect_custom(self):
-    # Effect implementation
-    pass
-
-# Register in effects dictionary
-self.effects = {
-    'custom': self.effect_custom,
-    # ...
-}
-```
-
-## Critical Errors
-
-- "Can't open /dev/mem: Permission denied" → needs sudo
-- "ws2811_init failed" → GPIO/hardware access issue  
-- "Port 5006 is in use" → another instance running (check pm2 status)
+External 5 V supply required (do not power 600 LEDs from the Pi).

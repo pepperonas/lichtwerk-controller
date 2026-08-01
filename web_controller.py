@@ -7,7 +7,10 @@ import signal
 import sys
 from flask import Flask, render_template, request, jsonify
 from flask_cors import CORS
-from rpi_ws281x import PixelStrip, Color
+try:
+    from pio_strip import PixelStrip, Color  # Pi 5: ws2812-pio /dev/leds0
+except ImportError:
+    from rpi_ws281x import PixelStrip, Color
 import random
 
 app = Flask(__name__)
@@ -568,6 +571,73 @@ class LichtwerkWebController:
         self.effect_params['breathe_brightness'] = brightness
         self.effect_params['breathe_direction'] = direction
     
+
+    def effect_iris_warn(self):
+        """Hard Iris blitz — LED translation of dB-Analyse `over-iris`.
+
+        On screen the crimson wash pops against a dark page; soft red-on-dim-red
+        on WS2812 only 'glows'. LEDs need binary contrast: FULL crimson ↔ BLACK.
+
+        Timing:
+          1) Engage double-pulse (class applied → hard snap)
+          2) Sustain square flash @ body-transition period (.55s), ~65% duty
+          3) On each ON edge: ~12 white LED sparks for ~40 ms only
+        Local ~60 fps — no HTTP frame spam from disco.
+        """
+        if not self.strip:
+            return
+        import random
+        import time as _time
+        t0 = self.effect_params.get('iris_t0')
+        if t0 is None:
+            t0 = _time.monotonic()
+            self.effect_params['iris_t0'] = t0
+            self.effect_params['iris_lit'] = None
+            self.effect_params['iris_sparking'] = None
+            self.effect_params['iris_spark_until'] = 0.0
+        t = _time.monotonic() - t0
+
+        # CSS peak rgba(255,70,55) — full punch, flat strip (no radial soft)
+        hr, hg, hb = 255, 70, 55
+
+        # ── Engage: two hard pulses (Aufleuchten) ──
+        # ON 70ms · OFF 60ms · ON 80ms, then sustain
+        if t < 0.21:
+            lit = not (0.07 <= t < 0.13)
+        else:
+            # Square wave keyed to body transition (.55s) — hard edges only
+            period = 0.55
+            u = ((t - 0.21) / period) % 1.0
+            lit = u < 0.65  # ~65% ON / 35% BLACK
+
+        last = self.effect_params.get('iris_lit')
+        if lit and last is not True:
+            # Rising edge → arm a ~40 ms white-spark window
+            self.effect_params['iris_spark_until'] = t + 0.04
+        spark = bool(lit and t < float(self.effect_params.get('iris_spark_until') or 0))
+        last_spark = self.effect_params.get('iris_sparking')
+        if last is lit and last_spark is spark:
+            return  # only rewrite on lit/spark edges
+        self.effect_params['iris_lit'] = lit
+        self.effect_params['iris_sparking'] = spark
+
+        if not lit:
+            self.clear()
+            return
+
+        scale = max(0.0, min(1.0, self.brightness / 255.0))
+        c = Color(int(hr * scale), int(hg * scale), int(hb * scale))
+        n = self.strip.numPixels()
+        for i in range(n):
+            self.strip.setPixelColor(i, c)
+        if spark and n > 0:
+            w = Color(int(255 * scale), int(255 * scale), int(255 * scale))
+            k = min(12, max(3, n // 50))
+            rng = random.Random(int(t0 * 1000) ^ int(t * 200))
+            for i in rng.sample(range(n), k):
+                self.strip.setPixelColor(i, w)
+        self.strip.show()
+
     def run_effect(self):
         if not self.power:
             self.clear()
@@ -586,7 +656,8 @@ class LichtwerkWebController:
             'juggle': self.effect_juggle,
             'theater': self.effect_theater_chase_rainbow,
             'gradient': self.effect_gradient_fill,
-            'fire': self.effect_fire
+            'fire': self.effect_fire,
+            'iris_warn': self.effect_iris_warn
         }
         
         if self.current_effect in effects:
@@ -597,7 +668,10 @@ class LichtwerkWebController:
             while self.running:
                 try:
                     self.run_effect()
-                    sleep_time = max(0.01, (101 - self.speed) / 1000.0)
+                    if self.current_effect == 'iris_warn':
+                        sleep_time = 0.016  # ~60 fps — match UI smoothness
+                    else:
+                        sleep_time = max(0.01, (101 - self.speed) / 1000.0)
                     time.sleep(sleep_time)
                 except Exception as e:
                     print(f"Effect error: {e}")
@@ -662,7 +736,7 @@ def set_speed():
 def set_effect():
     data = request.get_json()
     effect = data.get('effect', 'solid')
-    valid_effects = ['solid', 'rainbow', 'pulse', 'chase', 'sparkle', 'strobe', 'meteor', 'breathe', 'sinelon', 'juggle', 'theater', 'gradient', 'fire']
+    valid_effects = ['solid', 'rainbow', 'pulse', 'chase', 'sparkle', 'strobe', 'meteor', 'breathe', 'sinelon', 'juggle', 'theater', 'gradient', 'fire', 'iris_warn']
     
     if effect in valid_effects:
         controller.current_effect = effect
@@ -698,6 +772,14 @@ def set_effect():
             controller.effect_params['gradient_hue2'] = 120
         elif effect == 'fire':
             controller.effect_params['fire_heat'] = [0] * (controller.strip.numPixels() if controller.strip else 600)
+        elif effect == 'iris_warn':
+            controller.effect_params['iris_t0'] = None
+            controller.effect_params['iris_lit'] = None
+            controller.effect_params['iris_sparking'] = None
+            controller.effect_params['iris_spark_until'] = 0.0
+            # Full punch — page wash uses opacity, strip uses max global brightness
+            controller.brightness = 255
+
             
         return jsonify({'status': 'ok', 'effect': controller.current_effect})
     else:
