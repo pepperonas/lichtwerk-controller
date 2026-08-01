@@ -16,16 +16,18 @@ Device node: `/dev/leds0`. Driver module: `pio_strip.py` (preferred on Pi 5). Fa
 
 **Important:** Kernel brightness write is a **0–255 multiplier**. Never write `0` on begin (strip stays dark). App sets `brightness=255` when selecting `iris_warn`.
 
+**Latency:** `pio_strip` keeps `/dev/leds0` FD open across frames. `POST /api/effect iris_warn` auto-powers and paints the first frame in-request. Disco sync uses `POST /api/solid` (one RTT). Flask `threaded=True`.
+
 ## Architecture
 
 - **`web_controller.py`**: Flask server + effect loop (port 5006). Production entrypoint.
-- **`pio_strip.py`**: PixelStrip/Color compatible with rpi_ws281x API → writes RGBW u32 frames to `/dev/leds0`.
+- **`pio_strip.py`**: PixelStrip/Color compatible with rpi_ws281x API → persistent FD write to `/dev/leds0`.
 - **`controller.py`**: CLI/standalone effects (legacy/dev).
 - Demo mode if strip init fails (no hardware).
 
 ## Iris-Warn (`effect_iris_warn`)
 
-Used by **disco-controller Strip-Warn** (`warn_hue` API key). Hard crimson↔black square blitz + brief white sparks. See README. Disco owns start/stop; do not restore prior disco solid scene when Strip-Warn abandons (`LichtwerkClient.abandon`).
+Used by **disco-controller Strip-Warn** (`warn_hue` API key, threshold `warn_thr` SPL). Hard crimson↔black square blitz + brief white sparks. One POST from disco; no per-frame HTTP.
 
 ## Key Commands
 
