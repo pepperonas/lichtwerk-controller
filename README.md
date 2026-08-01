@@ -38,7 +38,7 @@ A sophisticated WS2812B LED strip controller for Raspberry Pi with web interface
 
 ## Iris-Warn (`iris_warn`)
 
-Disco **Strip-Warn** starts this effect while reported SPL exceeds the shared **`warn_thr`** (default **55 dB**, same as page/card Warnung — not the Iris ~70 dB / `DISCO_LOUD_MARK_DB` matrix mark):
+Disco **Strip-Warn** starts this effect while reported SPL exceeds the shared **`warn_thr`** (default **55 dB**, same as page/card Warnung and Matrix „IRIS“):
 
 1. Engage: two hard full-strip crimson pulses (~210 ms)
 2. Sustain: square wave, period 0.55 s, ~65 % ON — full `(255,70,55)` vs black (no soft glow)
