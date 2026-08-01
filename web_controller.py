@@ -693,6 +693,8 @@ class LichtwerkWebController:
             # Non-iris effects always leave the strip potentially lit
             if self.current_effect != 'iris_warn':
                 self._cleared = False
+
+    def start_effect_loop(self):
         def effect_loop():
             while self.running:
                 try:
@@ -707,13 +709,13 @@ class LichtwerkWebController:
                 except Exception as e:
                     print(f"Effect error: {e}")
                     time.sleep(0.05)
-        
+
         if self.effect_thread and self.effect_thread.is_alive():
             return
-        
+
         self.effect_thread = threading.Thread(target=effect_loop, daemon=True)
         self.effect_thread.start()
-    
+
     def get_status(self):
         return {
             'power': self.power,
