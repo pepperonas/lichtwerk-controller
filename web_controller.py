@@ -659,10 +659,9 @@ class LichtwerkWebController:
                 self.strip.setPixelColor(i, c)
         if spark and n > 0:
             w = Color(int(255 * scale), int(255 * scale), int(255 * scale))
-            # ~8% of strip (was ~12 LEDs) — never more than n
-            k = min(n, min(80, max(24, n // 12)))
-            if k < 1:
-                k = 1
+            # ~8% of strip (was ~12 LEDs); cap so crimson base stays visible
+            k = min(n, min(80, max(24 if n >= 48 else 3, n // 12)))
+            k = min(k, max(1, (n * 2) // 5))  # ≤40% white
             rng = random.Random(int(t0 * 1000) ^ int(t * 200))
             for i in rng.sample(range(n), k):
                 self.strip.setPixelColor(i, w)
