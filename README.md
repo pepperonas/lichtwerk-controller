@@ -4,7 +4,7 @@
 >
 > - **Host:** Live auf **raspi5** (`192.168.178.105`), GPIO **21**, Overlay `dtoverlay=ws2812-pio,gpio=21,num_leds=600,brightness=255` → `/dev/leds0`.
 > - **Driver:** `pio_strip.py` (Kernel-PIO) mit Fallback auf `rpi_ws281x` (Pi 3 / rpi_ws281x). Kernel-Brightness-Byte = Multiplier 0–255 (nie 0 schreiben).
-> - **Effekt `iris_warn`:** harter Crimson↔Schwarz-Square-Blitz (~60 fps) für Disco **Strip-Warn** (Iris ~70 dB). Engage-Doppelpuls + ~65 % Duty @ 0,55 s; kurze **Weiß-Sparks** (~12 LEDs, ~40 ms) an jeder ON-Kante. Kein HTTP-Frame-Spam von disco.
+> - **Effekt `iris_warn`:** harter Crimson↔Schwarz-Square-Blitz (~60 fps) für Disco **Strip-Warn** (feuert ab der geteilten `warn_thr`-Schwelle, Default **55 dB SPL** — nicht die Iris-~70‑Marke). Engage-Doppelpuls + ~65 % Duty @ 0,55 s; kurze **Weiß-Sparks** (~12 LEDs, ~40 ms) an jeder ON-Kante. Kein HTTP-Frame-Spam von disco.
 > - **UI:** Material Design 3 Expressive + shared App-Nav (`/shared/nav.js`).
 > - **Deploy:** `git pull && sudo systemctl restart lichtwerk-controller`
 
@@ -19,7 +19,7 @@
 [![LEDs](https://img.shields.io/badge/LEDs-600-FFD700.svg?logo=sparkfun&logoColor=white)](https://www.sparkfun.com/)
 [![Library](https://img.shields.io/badge/Library-rpi__ws281x-CC0000.svg?logo=github&logoColor=white)](https://github.com/jgarff/rpi_ws281x)
 [![Managed by](https://img.shields.io/badge/Managed%20by-systemd-0A7BBB.svg?logo=linux&logoColor=white)](https://systemd.io/)
-[![Tests](https://img.shields.io/badge/Tests-42%20passed-brightgreen.svg?logo=pytest&logoColor=white)](tests/)
+[![Tests](https://img.shields.io/badge/Tests-58%20passed-brightgreen.svg?logo=pytest&logoColor=white)](tests/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/pepperonas/lichtwerk-controller/pulls)
 [![Made with ❤️](https://img.shields.io/badge/Made%20with-%E2%9D%A4%EF%B8%8F-red.svg)](https://celox.io)
 
@@ -38,7 +38,7 @@ A sophisticated WS2812B LED strip controller for Raspberry Pi with web interface
 
 ## Iris-Warn (`iris_warn`)
 
-Disco **Strip-Warn** starts this effect while the mic exceeds Iris (~70 dB SPL / `DISCO_LOUD_MARK_DB=-20`):
+Disco **Strip-Warn** starts this effect while reported SPL exceeds the shared **`warn_thr`** (default **55 dB**, same as page/card Warnung — not the Iris ~70 dB / `DISCO_LOUD_MARK_DB` matrix mark):
 
 1. Engage: two hard full-strip crimson pulses (~210 ms)
 2. Sustain: square wave, period 0.55 s, ~65 % ON — full `(255,70,55)` vs black (no soft glow)
@@ -121,28 +121,23 @@ sudo python web_controller.py
 
 ## Tests
 
-Pure-function unit tests live in `tests/test_pure.py`. They run on any machine (Mac, Linux CI, the Pi itself) — hardware is mocked via `unittest.mock`, so no GPIO or rpi_ws281x library is required.
+Pure-function + driver unit tests live in `tests/`. They run on any machine (Mac, Linux CI, the Pi itself) — hardware is mocked or unused (`pio_strip` buffer-only), so no GPIO is required.
 
 ```bash
 # Install dev dependency
 pip install -r requirements-dev.txt
 
-# Run all tests
+# Run all tests (tests/ only — root test_*.py are Pi hardware scripts)
 pytest tests/ -v
 ```
 
-**Coverage (42 assertions across 7 test classes):**
+**Coverage (58 tests):**
 
-| Class | Functions under test |
+| Suite | Fokus |
 |---|---|
-| `TestWheel` | `wheel()` — hue-wheel colour formula, boundary values, all-256 range check |
-| `TestBrightnessScaling` | `set_pixel()` brightness multiplication, int truncation |
-| `TestClamp` | `set_brightness` + `set_speed` endpoint clamping logic |
-| `TestHsvToRgb` | `hsv_to_rgb()` — red, green, blue, black, white |
-| `TestFadeTowardColor` | `fade_toward_color()` — up/down fade, overshoot guard, already-at-target |
-| `TestFirePalette` | Fire-effect heat→colour palette (black→red→yellow→white), clamp guards |
-| `TestSpeedToSleep` | `start_effect_loop` sleep-time formula, floor enforcement |
-| `TestValidEffects` | Effect name registry — count, names, no duplicates |
+| `test_pure.py` | `wheel`, brightness, HSV, fade, fire palette, speed→sleep, effect registry |
+| `test_pio_strip.py` | Pi-5 `pio_strip.Color`/`PixelStrip` buffer, brightness scale, missing `/dev/leds0` |
+| `test_iris_warn.py` | `iris_warn` timing (engage double-pulse, 65 % duty), paint/clear, README/source contracts |
 
 ## License
 
