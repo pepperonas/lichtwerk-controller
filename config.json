@@ -12,7 +12,8 @@
     "iris_wash": {
         "steps": 64,
         "exposure": 1.8,
-        "max_current_a": null
+        "max_current_a": null,
+        "sparks": true
     },
     "default_effect": "rainbow",
     "effects": {

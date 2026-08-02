@@ -74,6 +74,12 @@ class LichtwerkWebController:
         self._wash_t0 = None           # breathe origin; None while idle
         self._wash_fade_t0 = None      # release ramp origin; None when not fading
         self._wash_fade_from = 0       # frame the fade started from
+        # White highlights on top of the wash — sparse, so the base frame stays
+        # precomputed and only a handful of LEDs are rewritten per frame.
+        self._wash_sparks_on = bool(wash_cfg.get('sparks', True))
+        self._wash_sparks = []         # [(centre_led, age_s), ...]
+        self._wash_spark_ts = None
+        self._wash_kernel = iris_wash.spark_kernel()
         
         # Effect parameters
         self.effect_params = {
@@ -636,9 +642,11 @@ class LichtwerkWebController:
             self._wash_n = n
             exposure = (iris_wash.fit_exposure(n, self._wash_max_current_a, self._wash_exposure)
                         if self._wash_max_current_a else self._wash_exposure)
+            peak = iris_wash.estimate_current_a(n, 1.0, exposure)
+            spark = iris_wash.spark_current_a() if self._wash_sparks_on else 0.0
             print(f"iris wash: {len(self._wash_cache)} frames x {n} LEDs, "
-                  f"exposure {exposure:.2f}, peak ~"
-                  f"{iris_wash.estimate_current_a(n, 1.0, exposure):.1f} A")
+                  f"exposure {exposure:.2f}, peak ~{peak:.1f} A"
+                  + (f" (+{spark:.1f} A highlights)" if spark else " (no highlights)"))
         return self._wash_cache
 
     def _wash_engage(self):
@@ -650,6 +658,8 @@ class LichtwerkWebController:
         """
         self._wash_t0 = time.monotonic() - iris_wash.BREATHE_PERIOD_S
         self._wash_fade_t0 = None
+        self._wash_sparks = []
+        self._wash_spark_ts = None
         self._wash_frames()
 
     def _wash_release(self):
@@ -733,13 +743,64 @@ class LichtwerkWebController:
             return
         if self._wash_t0 is None:
             self._wash_engage()
-        idx = iris_wash.frame_index(time.monotonic() - self._wash_t0, len(frames))
+        now = time.monotonic()
+        idx = iris_wash.frame_index(now - self._wash_t0, len(frames))
+        payload = frames[idx]
+        if self._wash_sparks_on:
+            payload = self._paint_sparks(payload, idx, len(frames), now)
         with self._strip_lock:
             # Re-check under the lock so a concurrent release is not overpainted
             if not self.power or not self.strip_warn_over:
                 return
-            self._show_payload(frames[idx])
+            self._show_payload(payload)
         self._cleared = False
+
+    def _paint_sparks(self, base, idx, steps, now):
+        """Lay fading white highlights over the precomputed wash frame.
+
+        `bytearray(base)` is a C-level copy and only a few LEDs are rewritten
+        afterwards, so the highlights cost roughly nothing and the breathe stays
+        precomputed. Added additively: the payload is already in linear PWM
+        space, which is where light actually sums.
+        """
+        dt = now - (self._wash_spark_ts if self._wash_spark_ts is not None else now)
+        self._wash_spark_ts = now
+        n = self.strip.numPixels() if self.strip else 0
+        if n <= 0:
+            return base
+
+        e = idx / max(1, steps - 1)          # breathe phase drives the spawn rate
+        alive = [(c, a + dt) for c, a in self._wash_sparks
+                 if a + dt < iris_wash.SPARK_LIFE_S]
+        expected = iris_wash.spark_rate(e) * dt
+        while expected > 0.0 and len(alive) < iris_wash.SPARK_MAX:
+            if random.random() < min(1.0, expected):
+                alive.append((random.randrange(n), 0.0))
+            expected -= 1.0
+        self._wash_sparks = alive
+        if not alive:
+            return base
+
+        buf = bytearray(base)
+        kernel = self._wash_kernel
+        w = iris_wash.SPARK_WIDTH
+        for centre, age in alive:
+            env = iris_wash.spark_envelope(age)
+            if env <= 0.0:
+                continue
+            amp = env * iris_wash.SPARK_PEAK
+            for k, off in enumerate(range(-w, w + 1)):
+                i = centre + off
+                if i < 0 or i >= n:
+                    continue
+                add = int(amp * kernel[k])
+                if add <= 0:
+                    continue
+                j = i * 4
+                for c in (j, j + 1, j + 2):
+                    v = buf[c] + add
+                    buf[c] = 255 if v > 255 else v
+        return bytes(buf)
 
     def run_effect(self):
         if self._wash_fade_t0 is not None:
@@ -821,6 +882,9 @@ class LichtwerkWebController:
                 'g': self.color[1],
                 'b': self.color[2]
             },
+            # Frames the kernel refused. Non-zero means we are writing into an
+            # in-flight DMA transfer — the pacing is off, not the paint.
+            'dropped_frames': getattr(self.strip, 'dropped_frames', 0) if self.strip else 0,
             'theater_rainbow': self.theater_rainbow,
             'led_count': self.strip.numPixels() if self.strip else 50,
             'pin': self.config['led_config']['pin']

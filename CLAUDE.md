@@ -42,9 +42,11 @@ Two things the strip needs that the browser gets for free:
 - **Geometry.** The page gradient is 2-D, the strip is a line, so we render the horizontal **centre scanline** through the gradient origin (50% / 40%). The ellipse is 120% of viewport width, so the strip spans t ∈ [0, 0.417] — a gentle falloff from the middle to both ends, exactly as on screen.
 - **Gamma.** CSS colours are sRGB for a ~2.2-gamma display; WS2812 PWM is linear. Writing the sRGB byte straight out renders the low channels far too bright and turns the brick red into washed pink. We convert sRGB → linear, then apply `exposure` so it still reads as a warning light rather than a dim replica of a screen.
 
-**No white sparks** — the page has none; the old effect invented them. Dropping them is also what makes precomputation possible.
+**White highlights** (`iris_wash.sparks`, default on) sit *on top* of that base. They are not on the page — a deliberate addition. Each fades in and out over 0.9 s on a sine envelope (no corner at either end, so they bloom and dissolve rather than blink), spread over 5 LEDs with a bell falloff so a highlight reads as a glow rather than one lit pixel. Spawn rate rises with the breathe (1.2/s → 4/s), capped at 10 concurrent, adding at most **1.3 A** on top of the wash.
 
-The whole breathe is **precomputed at arm time** (64 phase steps × 600 LEDs × 4 B ≈ 150 KB), so a frame costs an index lookup plus one write. Release ramps down over **0.55 s**, matching the page's `transition: background .55s`; re-crossing mid-fade snaps straight back to the peak. Disarm (`/api/warn_mode {on:false}`) still cuts hard.
+They stay cheap because they are sparse: a frame is the precomputed base copied at C speed (`bytearray(base)`) with a handful of LEDs overwritten additively — the payload is already in linear PWM space, which is where light actually sums. Measured cost **0.03 ms/frame**. This is why the base itself must stay white-free and precomputable.
+
+The whole breathe is **precomputed at arm time** (64 phase steps × 600 LEDs × 4 B ≈ 150 KB), so a frame costs an index lookup plus one write. Building those frames takes ~390 ms and happens once, when the effect is armed. Release ramps down over **0.55 s**, matching the page's `transition: background .55s`; re-crossing mid-fade snaps straight back to the peak. Disarm (`/api/warn_mode {on:false}`) still cuts hard.
 
 `config.json` → `iris_wash`:
 
@@ -53,6 +55,9 @@ The whole breathe is **precomputed at arm time** (64 phase steps × 600 LEDs × 
 | `steps` | 64 | frames per breathe ramp |
 | `exposure` | 1.8 | post-gamma gain |
 | `max_current_a` | `null` | caps the 5 V draw by scaling `exposure` down |
+| `sparks` | `true` | white highlights fading in over the wash |
+
+`/api/status` reports `dropped_frames` — non-zero means frames are being written into an in-flight DMA transfer, i.e. the pacing is wrong, not the paint.
 
 A full-strip wash at `exposure` 1.8 peaks near **10.8 A** on 600 LEDs (the service logs the figure on arm). Set `max_current_a` to the supply rating if it is tighter than that.
 

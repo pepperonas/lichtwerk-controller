@@ -61,11 +61,12 @@ def test_breathe_is_monotonic():
         prev = r
 
 
-def test_wash_stays_red_and_never_flashes_white():
-    """The page has no white sparks — green and blue must stay deep in the mud.
+def test_wash_base_stays_red():
+    """The base wash is the page, and the page is red — no white in the gradient.
 
-    The old strip effect injected white spark pixels that the page never had;
-    this guards against them creeping back in.
+    White highlights do exist on the strip, but as a deliberate sparse layer
+    painted over this base at draw time (see `_paint_sparks`). Keeping the base
+    itself free of white is what lets it stay precomputed.
     """
     for i in range(0, N, 17):
         for e in (0.0, 0.5, 1.0):
@@ -165,3 +166,47 @@ def test_build_frames_honours_the_cap():
 def test_single_led_strip_does_not_divide_by_zero():
     assert w.strip_t(0, 1) == 0.0
     assert len(w.build_frames(1, steps=3)) == 3
+
+
+# ---- white highlights ------------------------------------------------------
+# Not part of the page; added on request. They must stay sparse and smooth,
+# otherwise they undo both the look and the precomputation.
+
+def test_spark_envelope_fades_in_and_out():
+    assert w.spark_envelope(0.0) == 0.0
+    assert w.spark_envelope(w.SPARK_LIFE_S) == 0.0
+    assert w.spark_envelope(-1.0) == 0.0
+    assert w.spark_envelope(w.SPARK_LIFE_S * 2) == 0.0
+    assert w.spark_envelope(w.SPARK_LIFE_S / 2) == pytest.approx(1.0, abs=1e-6)
+    rising = [w.spark_envelope(w.SPARK_LIFE_S * x / 20) for x in range(11)]
+    assert rising == sorted(rising)
+    assert rising[1] < 0.25, "a hard onset would read as a blink, not a fade"
+
+
+def test_spark_kernel_is_a_centred_bell():
+    k = w.spark_kernel(2)
+    assert len(k) == 5
+    assert k[2] == pytest.approx(1.0)
+    assert k[0] == k[4] and k[1] == k[3]
+    assert k[0] < k[1] < k[2]
+    assert all(0.0 <= v <= 1.0 for v in k)
+
+
+def test_spark_kernel_degenerate_width():
+    assert w.spark_kernel(0) == (1.0,)
+
+
+def test_spark_rate_scales_with_the_breathe():
+    assert w.spark_rate(0.0) == pytest.approx(w.SPARK_RATE_IDLE)
+    assert w.spark_rate(1.0) == pytest.approx(w.SPARK_RATE_PEAK)
+    assert w.spark_rate(0.5) > w.spark_rate(0.0)
+    assert w.spark_rate(-5) == pytest.approx(w.SPARK_RATE_IDLE)
+    assert w.spark_rate(5) == pytest.approx(w.SPARK_RATE_PEAK)
+
+
+def test_spark_draw_stays_a_small_share_of_the_budget():
+    """Highlights must accent the wash, not rival it on the supply."""
+    wash = w.estimate_current_a(N, 1.0)
+    sparks = w.spark_current_a()
+    assert sparks < wash * 0.25
+    assert sparks > 0.05, "too dim to be worth the code"

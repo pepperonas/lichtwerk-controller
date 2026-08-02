@@ -41,6 +41,8 @@ tested without a strip attached.
 """
 from __future__ import annotations
 
+import math
+
 # ---- the page, verbatim ----------------------------------------------------
 PAGE_BASE = (58, 16, 16)                    # #3a1010
 GRADIENT_STOPS = (                          # (position, rgb, alpha)
@@ -217,6 +219,57 @@ def release_gain(elapsed_s: float) -> int:
     if elapsed_s >= RELEASE_FADE_S:
         return 0
     return int(round(255.0 * (1.0 - ease(elapsed_s / RELEASE_FADE_S))))
+
+
+# ---- white highlights ------------------------------------------------------
+# Not part of the page — a deliberate addition on top of the wash. They stay
+# cheap because they are sparse: a frame is the precomputed base copied at C
+# speed with a handful of LEDs overwritten, so the per-frame cost barely moves.
+SPARK_LIFE_S = 0.9          # birth → peak → gone
+SPARK_WIDTH = 2             # LEDs lit either side of the centre
+SPARK_PEAK = 170            # peak white added, in PWM units
+SPARK_MAX = 10              # concurrent highlights (also bounds the extra draw)
+SPARK_RATE_IDLE = 1.2       # spawns/s at the breathe minimum
+SPARK_RATE_PEAK = 4.0       # spawns/s at the breathe maximum
+
+
+def spark_envelope(age_s: float, life_s: float = SPARK_LIFE_S) -> float:
+    """0 → 1 → 0 across a highlight's life.
+
+    A sine has no corner at either end, so highlights bloom and dissolve
+    instead of blinking — which is the whole point of fading them in.
+    """
+    if life_s <= 0 or age_s <= 0.0 or age_s >= life_s:
+        return 0.0
+    return math.sin(math.pi * (age_s / life_s))
+
+
+def spark_kernel(width: int = SPARK_WIDTH):
+    """Spatial falloff so a highlight reads as a glow, not one lit pixel.
+
+    On a 10 m chain a single LED is a pinprick; spreading over a few gives it
+    presence without smearing it into the wash.
+    """
+    width = max(0, int(width))
+    out = []
+    for off in range(-width, width + 1):
+        x = abs(off) / (width + 1.0)
+        out.append((1.0 - x * x) ** 2)
+    return tuple(out)
+
+
+def spark_rate(e: float) -> float:
+    """Spawns per second at breathe phase e — busier as the wash swells."""
+    e = max(0.0, min(1.0, e))
+    return SPARK_RATE_IDLE + (SPARK_RATE_PEAK - SPARK_RATE_IDLE) * e
+
+
+def spark_current_a(peak: int = SPARK_PEAK, width: int = SPARK_WIDTH,
+                    count: int = SPARK_MAX) -> float:
+    """Worst-case extra draw from highlights, for the power budget."""
+    kernel = spark_kernel(width)
+    per = sum(kernel) * 3 * (peak / 255.0) * MA_PER_CHANNEL
+    return per * count
 
 
 def estimate_current_a(n: int, e: float, exposure: float = DEFAULT_EXPOSURE) -> float:
