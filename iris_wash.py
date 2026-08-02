@@ -143,13 +143,36 @@ def strip_t(i: int, n: int) -> float:
     return abs(i / (n - 1) - 0.5) / ELLIPSE_RX
 
 
-def led_rgb(i: int, n: int, e: float, exposure: float = DEFAULT_EXPOSURE):
+# Gamma correction leaves the wash almost pure red: the green and blue channels
+# land near 10 while red sits above 200. That is faithful to the page, but on a
+# strip it reads flat — the peak of the breathe has no heat to it. A small white
+# floor that grows with the breathe puts that back. It is a pure function of the
+# phase, so it costs nothing: it goes straight into the precomputed frames.
+WHITE_PEAK = 26             # PWM added to every channel at the breathe maximum
+
+
+def white_lift(e: float, peak: int = WHITE_PEAK) -> int:
+    """White floor at breathe phase e. Zero at the trough, `peak` at the top.
+
+    Squared rather than linear so the lift stays out of the way through most of
+    the cycle and only blooms near the maximum — otherwise it just desaturates
+    the whole wash into pink.
+    """
+    e = max(0.0, min(1.0, e))
+    return int(round(peak * e * e))
+
+
+def led_rgb(i: int, n: int, e: float, exposure: float = DEFAULT_EXPOSURE,
+            white: int = WHITE_PEAK):
     """Final 8-bit PWM values for LED i at breathe phase e."""
     srgb = page_pixel(strip_t(i, n), e)
+    # Weighted by the same radial falloff as the wash, so the heat sits where
+    # the gradient is brightest instead of lifting the dark ends into grey.
+    lift = white_lift(e, white) * (1.0 - min(1.0, strip_t(i, n) / ELLIPSE_RX * 1.2))
     out = []
     for v in srgb:
         lin = srgb_to_linear(v) * exposure
-        out.append(max(0, min(255, int(round(lin * 255.0)))))
+        out.append(max(0, min(255, int(round(lin * 255.0 + lift)))))
     return tuple(out)
 
 
@@ -185,14 +208,20 @@ def build_frames(n: int, steps: int = DEFAULT_STEPS,
     """
     n = max(0, int(n))
     steps = max(2, int(steps))
+    white = WHITE_PEAK
     if max_current_a:
-        exposure = fit_exposure(n, max_current_a, exposure)
+        fitted = fit_exposure(n, max_current_a, exposure)
+        # Scale the white floor by the same factor, or capping the exposure would
+        # leave an additive term untouched and quietly bust the budget it set.
+        if exposure > 0:
+            white = int(round(white * fitted / exposure))
+        exposure = fitted
     frames = []
     for s in range(steps):
         e = ease(s / (steps - 1))
         buf = bytearray(n * 4)
         for i in range(n):
-            r, g, b = led_rgb(i, n, e, exposure)
+            r, g, b = led_rgb(i, n, e, exposure, white)
             j = i * 4
             buf[j] = r
             buf[j + 1] = g
@@ -262,6 +291,48 @@ def spark_rate(e: float) -> float:
     """Spawns per second at breathe phase e — busier as the wash swells."""
     e = max(0.0, min(1.0, e))
     return SPARK_RATE_IDLE + (SPARK_RATE_PEAK - SPARK_RATE_IDLE) * e
+
+
+# ---- travelling shimmer ----------------------------------------------------
+# A wide, soft white band drifting along the chain. On a 10 m run this is what
+# the sparks cannot do: they are points, this is motion you can follow with your
+# eyes. Slow enough to read as a sweep rather than a chase, and gated on the
+# breathe so it swells with the wash instead of running independently of it.
+SHIMMER_COUNT = 2           # bands in flight, evenly spaced
+SHIMMER_WIDTH = 16          # LEDs of half-width — soft, not a dot
+SHIMMER_PEAK = 110          # PWM added at the band centre, at the breathe maximum
+SHIMMER_SPEED = 42.0        # LEDs per second; 600 LEDs ≈ 14 s per pass
+
+
+def shimmer_centre(elapsed_s: float, n: int, index: int = 0,
+                   count: int = SHIMMER_COUNT, speed: float = SHIMMER_SPEED) -> float:
+    """Position of shimmer band `index` after `elapsed_s`, wrapping the strip."""
+    if n <= 0 or count <= 0:
+        return 0.0
+    span = float(n)
+    return (elapsed_s * speed + index * span / count) % span
+
+
+def shimmer_amp(offset: float, e: float, width: int = SHIMMER_WIDTH,
+                peak: int = SHIMMER_PEAK) -> float:
+    """White added `offset` LEDs from a band centre at breathe phase e."""
+    if width <= 0:
+        return 0.0
+    x = abs(offset) / float(width)
+    if x >= 1.0:
+        return 0.0
+    # Cosine bell: no visible edge where the band ends.
+    bell = 0.5 * (1.0 + math.cos(math.pi * x))
+    return peak * bell * max(0.0, min(1.0, e))
+
+
+def shimmer_current_a(peak: int = SHIMMER_PEAK, width: int = SHIMMER_WIDTH,
+                      count: int = SHIMMER_COUNT) -> float:
+    """Worst-case extra draw from the shimmer bands."""
+    per_led = 0.0
+    for off in range(-width, width + 1):
+        per_led += shimmer_amp(off, 1.0, width, peak) / 255.0
+    return per_led * 3 * MA_PER_CHANNEL * count
 
 
 def spark_current_a(peak: int = SPARK_PEAK, width: int = SPARK_WIDTH,

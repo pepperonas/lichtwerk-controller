@@ -77,6 +77,7 @@ class LichtwerkWebController:
         # White highlights on top of the wash — sparse, so the base frame stays
         # precomputed and only a handful of LEDs are rewritten per frame.
         self._wash_sparks_on = bool(wash_cfg.get('sparks', True))
+        self._wash_shimmer_on = bool(wash_cfg.get('shimmer', True))
         self._wash_sparks = []         # [(centre_led, age_s), ...]
         self._wash_spark_ts = None
         self._wash_kernel = iris_wash.spark_kernel()
@@ -644,9 +645,11 @@ class LichtwerkWebController:
                         if self._wash_max_current_a else self._wash_exposure)
             peak = iris_wash.estimate_current_a(n, 1.0, exposure)
             spark = iris_wash.spark_current_a() if self._wash_sparks_on else 0.0
+            shim = iris_wash.shimmer_current_a() if self._wash_shimmer_on else 0.0
             print(f"iris wash: {len(self._wash_cache)} frames x {n} LEDs, "
                   f"exposure {exposure:.2f}, peak ~{peak:.1f} A"
-                  + (f" (+{spark:.1f} A highlights)" if spark else " (no highlights)"))
+                  f" (+{spark:.1f} sparks +{shim:.1f} shimmer)"
+                  f" = worst case ~{peak + spark + shim:.1f} A")
         return self._wash_cache
 
     def _wash_engage(self):
@@ -746,8 +749,8 @@ class LichtwerkWebController:
         now = time.monotonic()
         idx = iris_wash.frame_index(now - self._wash_t0, len(frames))
         payload = frames[idx]
-        if self._wash_sparks_on:
-            payload = self._paint_sparks(payload, idx, len(frames), now)
+        if self._wash_sparks_on or self._wash_shimmer_on:
+            payload = self._paint_overlay(payload, idx, len(frames), now)
         with self._strip_lock:
             # Re-check under the lock so a concurrent release is not overpainted
             if not self.power or not self.strip_warn_over:
@@ -755,13 +758,14 @@ class LichtwerkWebController:
             self._show_payload(payload)
         self._cleared = False
 
-    def _paint_sparks(self, base, idx, steps, now):
-        """Lay fading white highlights over the precomputed wash frame.
+    def _paint_overlay(self, base, idx, steps, now):
+        """Lay the white layers over the precomputed wash frame.
 
-        `bytearray(base)` is a C-level copy and only a few LEDs are rewritten
-        afterwards, so the highlights cost roughly nothing and the breathe stays
-        precomputed. Added additively: the payload is already in linear PWM
-        space, which is where light actually sums.
+        Two of them, doing different jobs: a travelling shimmer you can follow
+        with your eyes across 10 m, and sparks as the sharper, shorter accent on
+        top. Both are sparse, so a frame stays a C-speed copy of the precomputed
+        base with a few hundred bytes rewritten. Added additively because the
+        payload is already in linear PWM space, which is where light sums.
         """
         dt = now - (self._wash_spark_ts if self._wash_spark_ts is not None else now)
         self._wash_spark_ts = now
@@ -769,37 +773,53 @@ class LichtwerkWebController:
         if n <= 0:
             return base
 
-        e = idx / max(1, steps - 1)          # breathe phase drives the spawn rate
-        alive = [(c, a + dt) for c, a in self._wash_sparks
-                 if a + dt < iris_wash.SPARK_LIFE_S]
-        expected = iris_wash.spark_rate(e) * dt
-        while expected > 0.0 and len(alive) < iris_wash.SPARK_MAX:
-            if random.random() < min(1.0, expected):
-                alive.append((random.randrange(n), 0.0))
-            expected -= 1.0
-        self._wash_sparks = alive
-        if not alive:
+        e = idx / max(1, steps - 1)          # breathe phase drives both layers
+
+        alive = []
+        if self._wash_sparks_on:
+            alive = [(c, a + dt) for c, a in self._wash_sparks
+                     if a + dt < iris_wash.SPARK_LIFE_S]
+            expected = iris_wash.spark_rate(e) * dt
+            while expected > 0.0 and len(alive) < iris_wash.SPARK_MAX:
+                if random.random() < min(1.0, expected):
+                    alive.append((random.randrange(n), 0.0))
+                expected -= 1.0
+            self._wash_sparks = alive
+
+        if not alive and not self._wash_shimmer_on:
             return base
 
         buf = bytearray(base)
+
+        def add_at(i, amount):
+            if amount <= 0:
+                return
+            j = (i % n) * 4
+            for c in (j, j + 1, j + 2):
+                v = buf[c] + amount
+                buf[c] = 255 if v > 255 else v
+
+        # Shimmer first: sparks should still read as the brighter accent on top.
+        if self._wash_shimmer_on:
+            elapsed = now - (self._wash_t0 if self._wash_t0 is not None else now)
+            w = iris_wash.SHIMMER_WIDTH
+            for k in range(iris_wash.SHIMMER_COUNT):
+                centre = iris_wash.shimmer_centre(elapsed, n, k)
+                base_i = int(centre)
+                for off in range(-w, w + 1):
+                    add_at(base_i + off, int(iris_wash.shimmer_amp(base_i + off - centre, e)))
+
         kernel = self._wash_kernel
-        w = iris_wash.SPARK_WIDTH
+        sw = iris_wash.SPARK_WIDTH
         for centre, age in alive:
             env = iris_wash.spark_envelope(age)
             if env <= 0.0:
                 continue
             amp = env * iris_wash.SPARK_PEAK
-            for k, off in enumerate(range(-w, w + 1)):
+            for k, off in enumerate(range(-sw, sw + 1)):
                 i = centre + off
-                if i < 0 or i >= n:
-                    continue
-                add = int(amp * kernel[k])
-                if add <= 0:
-                    continue
-                j = i * 4
-                for c in (j, j + 1, j + 2):
-                    v = buf[c] + add
-                    buf[c] = 255 if v > 255 else v
+                if 0 <= i < n:
+                    add_at(i, int(amp * kernel[k]))
         return bytes(buf)
 
     def run_effect(self):

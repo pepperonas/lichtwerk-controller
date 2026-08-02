@@ -61,18 +61,63 @@ def test_breathe_is_monotonic():
         prev = r
 
 
-def test_wash_base_stays_red():
-    """The base wash is the page, and the page is red — no white in the gradient.
+def test_wash_stays_red_dominant():
+    """Red has to stay clearly dominant, lift or no lift.
 
-    White highlights do exist on the strip, but as a deliberate sparse layer
-    painted over this base at draw time (see `_paint_sparks`). Keeping the base
-    itself free of white is what lets it stay precomputed.
+    The breathe peak deliberately carries a white floor (white_lift) so it reads
+    hot rather than flat, but the wash is a red warning — if green approaches
+    red it has turned pink, which is the failure this guards.
     """
     for i in range(0, N, 17):
         for e in (0.0, 0.5, 1.0):
             r, g, b = w.led_rgb(i, N, e)
-            assert g < r * 0.15
-            assert b < r * 0.15
+            assert r > 90, "wash went dim"
+            assert g < r * 0.30, f"desaturated to pink at LED {i}, e={e}: {(r,g,b)}"
+            assert b <= g, "blue must not lead green in a warm red"
+
+
+def test_white_lift_only_blooms_near_the_peak():
+    assert w.white_lift(0.0) == 0
+    assert w.white_lift(1.0) == w.WHITE_PEAK
+    # Squared, so it stays out of the way through most of the cycle
+    assert w.white_lift(0.5) < w.WHITE_PEAK * 0.3
+    prev = -1
+    for i in range(11):
+        v = w.white_lift(i / 10)
+        assert v >= prev
+        prev = v
+
+
+def test_white_lift_fades_towards_the_strip_ends():
+    """Weighted by the radial falloff, or the dark ends would lift into grey."""
+    mid = w.led_rgb(N // 2, N, 1.0)
+    end = w.led_rgb(0, N, 1.0)
+    plain_mid = w.led_rgb(N // 2, N, 1.0, white=0)
+    plain_end = w.led_rgb(0, N, 1.0, white=0)
+    assert mid[1] - plain_mid[1] > end[1] - plain_end[1]
+
+
+def test_shimmer_is_a_soft_travelling_bell():
+    assert w.shimmer_amp(0, 1.0) == pytest.approx(w.SHIMMER_PEAK)
+    assert w.shimmer_amp(w.SHIMMER_WIDTH, 1.0) == 0.0
+    assert w.shimmer_amp(w.SHIMMER_WIDTH * 2, 1.0) == 0.0
+    assert w.shimmer_amp(0, 0.0) == 0.0, "must be gated on the breathe"
+    prev = w.SHIMMER_PEAK + 1
+    for off in range(0, w.SHIMMER_WIDTH + 1):
+        v = w.shimmer_amp(off, 1.0)
+        assert v <= prev
+        prev = v
+
+
+def test_shimmer_bands_are_evenly_spaced_and_wrap():
+    n, cnt = 600, 2
+    a = w.shimmer_centre(0.0, n, 0, cnt)
+    b = w.shimmer_centre(0.0, n, 1, cnt)
+    assert abs((b - a) - n / cnt) < 1e-6
+    # one full pass returns to the start
+    period = n / w.SHIMMER_SPEED
+    assert w.shimmer_centre(period, n, 0, cnt) == pytest.approx(a, abs=1e-6)
+    assert 0 <= w.shimmer_centre(12345.6, n, 1, cnt) < n
 
 
 def test_gamma_darkens_relative_to_srgb():
@@ -140,14 +185,23 @@ def test_build_frames_ends_bracket_the_breathe():
     assert frames[0][0] < frames[-1][0]
 
 
-def test_fit_exposure_respects_a_power_budget():
-    """A 600 LED red wash pulls double-digit amps — the cap has to bite."""
+def _frame_current_a(frame, n):
+    """Draw of an actual built frame — the formula alone misses the white lift."""
+    tot = sum(frame[i*4] + frame[i*4+1] + frame[i*4+2] for i in range(n))
+    return tot / 255.0 * w.MA_PER_CHANNEL + n * w.MA_IDLE_PER_LED
+
+
+def test_cap_is_measured_on_the_built_frame():
+    """The cap must hold for what is actually written, not just the exposure.
+
+    white_lift is additive after the exposure, so scaling exposure alone would
+    leave a term untouched and quietly bust the budget the cap promised.
+    """
     full = w.estimate_current_a(N, 1.0)
     assert full > 6.0, "reference draw changed; revisit the power budget"
-
-    capped = w.fit_exposure(N, 6.0)
-    assert capped < w.DEFAULT_EXPOSURE
-    assert w.estimate_current_a(N, 1.0, capped) == pytest.approx(6.0, rel=0.02)
+    for cap in (12.0, 8.0, 6.0):
+        peak = w.build_frames(N, steps=2, max_current_a=cap)[-1]
+        assert _frame_current_a(peak, N) == pytest.approx(cap, rel=0.03)
 
 
 def test_fit_exposure_noop_without_budget():

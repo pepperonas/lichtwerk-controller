@@ -56,6 +56,9 @@ The whole breathe is **precomputed at arm time** (64 phase steps × 600 LEDs × 
 | `exposure` | 1.8 | post-gamma gain |
 | `max_current_a` | `null` | caps the 5 V draw by scaling `exposure` down |
 | `sparks` | `true` | white highlights fading in over the wash |
+| `shimmer` | `true` | soft white bands sweeping the chain |
+
+**Weiß-Ebenen (2026-08-02).** Gamma lässt den Wash fast rein rot (G/B ~10 bei R>200) — treu zur Seite, auf dem Strip aber flach. Zwei Ebenen setzen Hitze zurück: **`white_lift`** ist ein quadratisch mit dem Atem wachsender Weiß-Boden (Peak 26 PWM), radial gewichtet wie der Wash, damit die dunklen Enden nicht ins Graue heben — reine Funktion der Phase, also **in der Vorberechnung, Kosten null**. **Schimmer** sind zwei weiche Kosinus-Glocken (Halbbreite 16 LEDs, 42 LEDs/s ≈ 14 s je Durchlauf), am Atem gekoppelt und über denselben dünnen Overlay-Pfad wie die Sparks gemalt. Peak (240,41,36) statt (214,15,10). **Strom: 13,7 A Wash-Peak + 1,3 sparks + 0,8 shimmer = 15,9 A worst case** — der Dienst loggt es beim Armieren. `max_current_a` skaliert den Weiß-Lift korrekt mit (sonst bliebe ein additiver Term stehen); der Test misst am **real gebauten Frame**, nicht an der Formel.
 
 `/api/status` reports `dropped_frames` — non-zero means frames are being written into an in-flight DMA transfer, i.e. the pacing is wrong, not the paint.
 
