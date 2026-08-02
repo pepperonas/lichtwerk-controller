@@ -121,9 +121,14 @@ def test_shimmer_bands_are_evenly_spaced_and_wrap():
 
 
 def test_gamma_darkens_relative_to_srgb():
-    """WS2812 PWM is linear; writing the sRGB byte straight out is too bright."""
+    """WS2812 PWM is linear; writing the sRGB byte straight out is too bright.
+
+    Isolated with white=0: the white floor is added after the gamma conversion,
+    so leaving it on compares the conversion against a different quantity and
+    the assertion stops meaning anything.
+    """
     srgb = w.page_pixel(w.strip_t(299, N), 1.0)
-    linear = w.led_rgb(299, N, 1.0, exposure=1.0)
+    linear = w.led_rgb(299, N, 1.0, exposure=1.0, white=0)
     assert linear[0] < srgb[0]
     assert linear[1] < srgb[1]
 

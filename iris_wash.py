@@ -148,7 +148,7 @@ def strip_t(i: int, n: int) -> float:
 # strip it reads flat — the peak of the breathe has no heat to it. A small white
 # floor that grows with the breathe puts that back. It is a pure function of the
 # phase, so it costs nothing: it goes straight into the precomputed frames.
-WHITE_PEAK = 26             # PWM added to every channel at the breathe maximum
+WHITE_PEAK = 58             # PWM added to every channel at the breathe maximum
 
 
 def white_lift(e: float, peak: int = WHITE_PEAK) -> int:
@@ -168,7 +168,12 @@ def led_rgb(i: int, n: int, e: float, exposure: float = DEFAULT_EXPOSURE,
     srgb = page_pixel(strip_t(i, n), e)
     # Weighted by the same radial falloff as the wash, so the heat sits where
     # the gradient is brightest instead of lifting the dark ends into grey.
-    lift = white_lift(e, white) * (1.0 - min(1.0, strip_t(i, n) / ELLIPSE_RX * 1.2))
+    # Squared falloff: a hot core rather than a flat wash. Concentrating the
+    # white where the gradient is already brightest is what makes it read as
+    # heat instead of desaturation — and it keeps the draw off the 600 LEDs
+    # that would otherwise all pay for it.
+    _f = max(0.0, 1.0 - min(1.0, strip_t(i, n) / ELLIPSE_RX * 1.2))
+    lift = white_lift(e, white) * _f * _f
     out = []
     for v in srgb:
         lin = srgb_to_linear(v) * exposure
@@ -254,12 +259,12 @@ def release_gain(elapsed_s: float) -> int:
 # Not part of the page — a deliberate addition on top of the wash. They stay
 # cheap because they are sparse: a frame is the precomputed base copied at C
 # speed with a handful of LEDs overwritten, so the per-frame cost barely moves.
-SPARK_LIFE_S = 0.9          # birth → peak → gone
+SPARK_LIFE_S = 0.7          # birth → peak → gone
 SPARK_WIDTH = 2             # LEDs lit either side of the centre
-SPARK_PEAK = 170            # peak white added, in PWM units
-SPARK_MAX = 10              # concurrent highlights (also bounds the extra draw)
-SPARK_RATE_IDLE = 1.2       # spawns/s at the breathe minimum
-SPARK_RATE_PEAK = 4.0       # spawns/s at the breathe maximum
+SPARK_PEAK = 215            # peak white added, in PWM units
+SPARK_MAX = 18              # concurrent highlights (also bounds the extra draw)
+SPARK_RATE_IDLE = 2.0       # spawns/s at the breathe minimum
+SPARK_RATE_PEAK = 9.0       # spawns/s at the breathe maximum
 
 
 def spark_envelope(age_s: float, life_s: float = SPARK_LIFE_S) -> float:
@@ -298,10 +303,10 @@ def spark_rate(e: float) -> float:
 # the sparks cannot do: they are points, this is motion you can follow with your
 # eyes. Slow enough to read as a sweep rather than a chase, and gated on the
 # breathe so it swells with the wash instead of running independently of it.
-SHIMMER_COUNT = 2           # bands in flight, evenly spaced
+SHIMMER_COUNT = 3           # bands in flight, evenly spaced
 SHIMMER_WIDTH = 16          # LEDs of half-width — soft, not a dot
-SHIMMER_PEAK = 110          # PWM added at the band centre, at the breathe maximum
-SHIMMER_SPEED = 42.0        # LEDs per second; 600 LEDs ≈ 14 s per pass
+SHIMMER_PEAK = 195          # PWM added at the band centre, at the breathe maximum
+SHIMMER_SPEED = 88.0        # LEDs per second; 600 LEDs ≈ 7 s per pass
 
 
 def shimmer_centre(elapsed_s: float, n: int, index: int = 0,
