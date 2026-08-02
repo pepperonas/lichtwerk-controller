@@ -82,74 +82,108 @@ def test_show_without_begin_is_noop(tmp_path, monkeypatch):
     s.show()  # not begun
     assert opened == []
 
-
-def test_begin_keeps_fd_open(tmp_path, monkeypatch):
-    """Latency: open once in begin(); show() must not re-open every frame."""
-    dev = tmp_path / "leds0"
-    dev.write_bytes(b"")
-    opens = []
-    writes = []
-    closes = []
-    fake_fd = [10]
+def _fake_dev(monkeypatch):
+    """Capture open/write/close so the driver contract can be asserted."""
+    log = {"opens": [], "writes": [], "closes": []}
+    fd_seq = [10]
 
     def fake_open(path, flags):
-        opens.append(path)
-        fd = fake_fd[0]
-        fake_fd[0] += 1
-        return fd
-
-    def fake_write(fd, data):
-        writes.append((fd, bytes(data)))
-        return len(data)
-
-    def fake_close(fd):
-        closes.append(fd)
+        log["opens"].append(path)
+        fd_seq[0] += 1
+        return fd_seq[0]
 
     monkeypatch.setattr("os.open", fake_open)
-    monkeypatch.setattr("os.write", fake_write)
-    monkeypatch.setattr("os.close", fake_close)
+    monkeypatch.setattr("os.write",
+                        lambda fd, data: log["writes"].append((fd, bytes(data))) or len(data))
+    monkeypatch.setattr("os.close", lambda fd: log["closes"].append(fd))
+    return log
+
+
+def test_begin_uses_its_own_open_for_the_brightness_byte(tmp_path, monkeypatch):
+    """The brightness byte counts against the frame buffer.
+
+    Sharing an fd with the first frame would make that frame fail with ENOSPC,
+    which is exactly what the old persistent-fd path papered over.
+    """
+    dev = tmp_path / "leds0"
+    dev.write_bytes(b"")
+    log = _fake_dev(monkeypatch)
 
     s = PixelStrip(1, brightness=255, device=str(dev))
     s.begin()
-    assert len(opens) == 1
-    assert s._fd >= 0
-    # brightness init write
-    assert writes and writes[0][1] == b"\xff"
+
+    assert log["opens"] == [str(dev)]
+    assert log["writes"][0][1] == b"\xff"
+    assert log["closes"], "begin() must not leave the fd open"
+
+
+def test_show_opens_once_per_frame(tmp_path, monkeypatch):
+    """One frame per open(): a second write on the same fd always fails ENOSPC."""
+    dev = tmp_path / "leds0"
+    dev.write_bytes(b"")
+    log = _fake_dev(monkeypatch)
+
+    s = PixelStrip(1, brightness=255, device=str(dev))
+    s.begin()
+    before = len(log["opens"])
 
     s.setPixelColor(0, Color(255, 0, 0))
     s.show()
     s.show()
-    assert len(opens) == 1  # no reopen
-    assert len(closes) == 0
-    assert writes[-1][1][0:3] == bytes([255, 0, 0])
-    assert writes[-1][0] == s._fd
+    s.show()
 
-    s.close()
-    assert s._fd < 0
-    assert closes
+    assert len(log["opens"]) == before + 3
+    assert len(log["closes"]) == len(log["opens"])
+    assert log["writes"][-1][1][0:3] == bytes([255, 0, 0])
 
 
 def test_show_scales_by_brightness(tmp_path, monkeypatch):
-    s = PixelStrip(1, brightness=128, device=str(tmp_path / "leds0"))
-    s._begun = True
-    s._fd = 3
+    dev = tmp_path / "leds0"
+    dev.write_bytes(b"")
+    log = _fake_dev(monkeypatch)
+    s = PixelStrip(1, brightness=128, device=str(dev))
+    s.begin()
     s.setPixelColor(0, Color(255, 0, 0))
-    writes = []
-
-    monkeypatch.setattr("os.write", lambda fd, data: writes.append(bytes(data)) or len(data))
     s.show()
-    assert writes
-    assert writes[0][0] == 128
-    assert writes[0][1] == 0
-    assert writes[0][2] == 0
+    assert log["writes"][-1][1][0:3] == bytes([128, 0, 0])
 
 
 def test_show_full_brightness_passthrough(tmp_path, monkeypatch):
-    s = PixelStrip(1, brightness=255, device=str(tmp_path / "leds0"))
-    s._begun = True
-    s._fd = 7
+    dev = tmp_path / "leds0"
+    dev.write_bytes(b"")
+    log = _fake_dev(monkeypatch)
+    s = PixelStrip(1, brightness=255, device=str(dev))
+    s.begin()
     s.setPixelColor(0, Color(255, 70, 55))
-    writes = []
-    monkeypatch.setattr("os.write", lambda fd, data: writes.append(bytes(data)) or len(data))
     s.show()
-    assert writes[0][0:3] == bytes([255, 70, 55])
+    assert log["writes"][-1][1][0:3] == bytes([255, 70, 55])
+
+
+def test_show_payload_ignores_driver_brightness(tmp_path, monkeypatch):
+    """Payloads are gamma/exposure rendered — only the caller's gain may scale them."""
+    dev = tmp_path / "leds0"
+    dev.write_bytes(b"")
+    log = _fake_dev(monkeypatch)
+    s = PixelStrip(1, brightness=100, device=str(dev))
+    s.begin()
+    s.show_payload(bytes([200, 20, 15, 0]))
+    assert log["writes"][-1][1][0:3] == bytes([200, 20, 15])
+    s.show_payload(bytes([200, 20, 15, 0]), gain=128)
+    assert log["writes"][-1][1][0:3] == bytes([100, 10, 7])
+
+
+def test_write_failure_is_counted_not_raised(tmp_path, monkeypatch):
+    """A refused frame must never take down the effect loop."""
+    dev = tmp_path / "leds0"
+    dev.write_bytes(b"")
+    _fake_dev(monkeypatch)
+    s = PixelStrip(1, device=str(dev))
+    s.begin()
+
+    def enospc(fd, data):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr("os.write", enospc)
+    s.show()
+    assert s.dropped_frames == 1
+

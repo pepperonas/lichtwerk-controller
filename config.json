@@ -9,6 +9,11 @@
         "led_channel": 0,
         "strip_type": "WS2812"
     },
+    "iris_wash": {
+        "steps": 64,
+        "exposure": 1.8,
+        "max_current_a": null
+    },
     "default_effect": "rainbow",
     "effects": {
         "rainbow": {

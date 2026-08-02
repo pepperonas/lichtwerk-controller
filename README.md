@@ -1,10 +1,11 @@
 # Lichtwerk LED Controller
 
-> **⚡ Update 2026-08-01 — Pi 5 + Iris-Warn + Low-Latency**
+> **⚡ Update 2026-08-02 — Iris-Wash: der dB-Analyse-Hintergrund auf dem Strip**
 >
 > - **Host:** Live auf **raspi5** (`192.168.178.105`), GPIO **21**, Overlay `dtoverlay=ws2812-pio,gpio=21,num_leds=600,brightness=255` → `/dev/leds0`.
-> - **Driver:** `pio_strip.py` hält `/dev/leds0` **offen** (kein open/close pro Frame) + `fill()`; Fallback `rpi_ws281x`.
-> - **Effekt `iris_warn`:** harter Crimson↔Schwarz-Blitz für Disco **Strip-Warn** (`warn_thr`, Default **55 dB**). `/api/effect iris_warn` **auto-power + First-Frame im Request**; Loop wake via Event (~8 ms). Idle-`clear()` skippt wenn schon dunkel.
+> - **Driver:** **ein Frame pro `open()`** — ein zweiter `write()` auf denselben FD scheitert immer mit `ENOSPC`, Warten hilft nicht (bis 1000 ms geprüft), das Device ist nicht seekbar. Die frühere „FD offen halten"-Optimierung konnte deshalb nie greifen; jeder Frame lief still über Fehl-Write → close → reopen → write. `show()` öffnet jetzt pro Frame (0,002 ms), Helligkeit über `bytes.translate`-LUT statt Genexp.
+> - **Effekt `iris_warn`:** exakte Portierung des Seiten-Hintergrunds `body.over-iris` (Radialgradient + `iris-breathe` + echte `cubic-bezier(.2,0,0,1)`), gamma-korrigiert, **ohne** weiße Sparks. Atem komplett vorberechnet → ~150 KB, Frame = Index + Write. Release blendet über **0,55 s** aus wie die Seite.
+> - **Timing:** Shift-out-Boden 600 LEDs = **18,0 ms (55,6 fps)**; der Wash taktet deadline-basiert auf **30 fps** — live gemessen exakt 30,0 fps, im Leerlauf **0 Byte** auf `/dev/leds0`.
 > - **API:** `POST /api/solid` = power+RGB+bri in **einem** RTT (Disco-Sync). Flask `threaded=True`.
 > - **Deploy:** `git pull && sudo systemctl restart lichtwerk-controller`
 
@@ -40,10 +41,16 @@ A sophisticated WS2812B LED strip controller for Raspberry Pi with web interface
 
 Disco **Strip-Warn** starts this effect while reported SPL exceeds the shared **`warn_thr`** (default **55 dB**, same as page/card Warnung and Matrix „IRIS“):
 
-1. Engage: two hard full-strip crimson pulses (~210 ms)
-2. Sustain: square wave, period 0.55 s, ~65 % ON — full `(255,70,55)` vs black (no soft glow)
-3. Each ON edge: **~50–80 white LEDs** (~8 % of strip, was ~12) for ~55 ms — denser lightning accent
-4. **Latency:** disco posts **once** (`POST /api/effect {"effect":"iris_warn"}`); this handler sets `power=True`, `bri=255`, and paints the **first frame before the HTTP response returns**. Effect loop wakes via Event (~8 ms). `pio_strip` keeps `/dev/leds0` open.
+Der Strip zeigt dabei **denselben Wash wie der Seitenhintergrund der dB-Analyse** (`body.over-iris` in `stats.html`) — als Portierung, nicht als Interpretation. Die Farbmathematik liegt in `iris_wash.py`:
+
+1. **Compositing wie im Browser:** premultiplied interpolierter Radialgradient über `#3a1010`, darüber die `iris-breathe`-Keyframes (1,8 s, `alternate`) per srcOver in sRGB. Die `cubic-bezier(.2,0,0,1)` wird gelöst, nicht durch einen Smoothstep angenähert.
+2. **Geometrie:** die Seite ist 2-D, der Strip eine Linie → gerendert wird die **horizontale Mittel-Scanline** durch den Gradientenursprung (50 % / 40 %). Die Ellipse misst 120 % der Viewport-Breite, der Strip überstreicht also t ∈ [0, 0.417]: sanfter Abfall von der Mitte zu beiden Enden, genau wie am Schirm.
+3. **Gamma:** CSS-Farben sind sRGB für einen Bildschirm mit ~2,2 Gamma, WS2812-PWM ist linear. Ohne Korrektur werden die schwachen Kanäle viel zu hell und aus Ziegelrot wird Rosa. sRGB → linear, danach `exposure` als Belichtung, damit es Warnlicht bleibt und keine dunkle Bildschirmkopie.
+4. **Keine weißen Sparks** — die Seite hat keine. Ihr Wegfall macht die Vorberechnung überhaupt erst möglich.
+5. **Vorberechnung:** der gesamte Atem entsteht beim Armieren (64 Stufen × 600 LEDs × 4 B ≈ 150 KB). Ein Frame = Index + Write, CPU an der Messgrenze.
+6. **Release:** Ausblende über **0,55 s** passend zur `transition: background .55s` der Seite; erneutes Überschreiten während der Rampe springt sofort zurück auf den Höhepunkt. `/api/warn_mode {on:false}` schneidet weiterhin hart ab.
+
+Konfiguration in `config.json` → `iris_wash`: `steps` (64), `exposure` (1.8), `max_current_a` (`null`). Ein Vollflächen-Wash zieht bei Belichtung 1,8 auf 600 LEDs bis zu **~10,8 A** — der Dienst loggt den Wert beim Armieren. Ist das Netzteil knapper, `max_current_a` auf dessen Nennstrom setzen; die Belichtung wird dann passend heruntergerechnet (Farbton und Atem bleiben unverändert).
 
 ```bash
 curl -X POST http://127.0.0.1:5006/api/effect -H 'Content-Type: application/json' -d '{"effect":"iris_warn"}'
@@ -82,6 +89,10 @@ Valid effects include: `solid`, `rainbow`, `pulse`, `chase`, `sparkle`, `strobe`
 ```
 
 > **Note:** The WS2812B strip requires an external 5V power supply — do not power from the Pi. All three GND lines (Pi, PSU, strip) must be connected together. Requires root for DMA/mmap access.
+
+**Realistischer Strombedarf.** Die 30 A oben sind der Worst Case (600 LEDs, Vollweiß). Der Iris-Wash ist rot und gedimmt und zieht bei Belichtung 1,8 rund **6,4 A (Atem-Minimum) bis 10,8 A (Maximum)**, plus ~0,6 A Ruhestrom der 600 Controller. Reicht das Netzteil dafür nicht, `iris_wash.max_current_a` in `config.json` auf dessen Nennstrom setzen — die Belichtung wird dann heruntergerechnet, Farbton und Atem bleiben erhalten.
+
+Bei ~10 m Gesamtlänge (2 × 300 LEDs in Serie) ist **einseitige Einspeisung grenzwertig**: der Spannungsabfall macht das ferne Ende dunkler und verschiebt Rot ins Gelbliche. Wenn der Verlauf zu den Enden hin stärker abfällt als die Tabelle in `iris_wash.py` vorgibt, ist das kein Rendering-Fehler, sondern fehlende Einspeisung am Strip-Ende.
 
 ## Quick Start
 
