@@ -62,7 +62,7 @@ The whole breathe is **precomputed at arm time** (64 phase steps × 600 LEDs × 
 
 `/api/status` reports `dropped_frames` — non-zero means frames are being written into an in-flight DMA transfer, i.e. the pacing is wrong, not the paint.
 
-A full-strip wash at `exposure` 1.8 peaks near **10.8 A** on 600 LEDs (the service logs the figure on arm). Set `max_current_a` to the supply rating if it is tighter than that.
+A full-strip wash at `exposure` 1.8 peaks near **13.7 A** on 600 LEDs (15.9 A with both overlays) (the service logs the figure on arm). Set `max_current_a` to the supply rating if it is tighter than that.
 
 ## Key Commands
 
