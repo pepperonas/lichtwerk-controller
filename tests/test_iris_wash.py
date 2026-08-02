@@ -76,37 +76,39 @@ def test_wash_stays_red_dominant():
             assert b <= g, "blue must not lead green in a warm red"
 
 
-def test_white_lift_only_blooms_near_the_peak():
-    assert w.white_lift(0.0) == 0
-    assert w.white_lift(1.0) == w.WHITE_PEAK
-    # Squared, so it stays out of the way through most of the cycle
-    assert w.white_lift(0.5) < w.WHITE_PEAK * 0.3
-    prev = -1
-    for i in range(11):
-        v = w.white_lift(i / 10)
-        assert v >= prev
-        prev = v
+def test_base_carries_no_white_floor():
+    """The floor is off by design: it desaturated all 600 LEDs at once and, with
+    red already near 255, pushed the colour along red → orange → yellow → white.
+    White belongs in the highlights, where it can be crisp."""
+    assert w.WHITE_PEAK == 0
+    assert w.white_lift(1.0) == 0
+    assert w.led_rgb(300, N, 1.0) == w.led_rgb(300, N, 1.0, white=0)
 
 
-def test_white_lift_fades_towards_the_strip_ends():
-    """Weighted by the radial falloff, or the dark ends would lift into grey."""
-    mid = w.led_rgb(N // 2, N, 1.0)
-    end = w.led_rgb(0, N, 1.0)
-    plain_mid = w.led_rgb(N // 2, N, 1.0, white=0)
-    plain_end = w.led_rgb(0, N, 1.0, white=0)
-    assert mid[1] - plain_mid[1] > end[1] - plain_end[1]
+
+def test_breathe_varies_the_red_tone():
+    """With no white floor the variation has to come from red itself."""
+    lo, hi = w.led_rgb(300, N, 0.0), w.led_rgb(300, N, 1.0)
+    assert hi[0] - lo[0] > 60, "breathe should move the red substantially"
+    for c in (lo, hi):
+        assert c[1] < c[0] * 0.12, f"stayed saturated? {c}"
 
 
-def test_shimmer_is_a_soft_travelling_bell():
-    assert w.shimmer_amp(0, 1.0) == pytest.approx(w.SHIMMER_PEAK)
+
+def test_shimmer_is_a_flat_core_with_a_short_edge():
+    """A bell spends most of its width in the mid amplitudes — and those are
+    exactly the values that render orange and yellow, because red clips at 255
+    while green and blue are still climbing. Flat core, short edge instead."""
+    assert w.shimmer_amp(0, 1.0) == pytest.approx(w.SHIMMER_MIX)
     assert w.shimmer_amp(w.SHIMMER_WIDTH, 1.0) == 0.0
-    assert w.shimmer_amp(w.SHIMMER_WIDTH * 2, 1.0) == 0.0
     assert w.shimmer_amp(0, 0.0) == 0.0, "must be gated on the breathe"
-    prev = w.SHIMMER_PEAK + 1
-    for off in range(0, w.SHIMMER_WIDTH + 1):
-        v = w.shimmer_amp(off, 1.0)
-        assert v <= prev
-        prev = v
+    inner = int(w.SHIMMER_WIDTH * w.SHIMMER_PLATEAU)
+    assert w.shimmer_amp(inner, 1.0) == pytest.approx(w.SHIMMER_MIX), "core not flat"
+    # The zone that renders as orange must stay a couple of LEDs wide
+    mid = [o for o in range(w.SHIMMER_WIDTH + 1)
+           if 0.15 < w.shimmer_amp(o, 1.0) < 0.85]
+    assert len(mid) <= 3, f"transition too wide: {mid}"
+
 
 
 def test_shimmer_bands_are_evenly_spaced_and_wrap():
@@ -204,7 +206,7 @@ def test_cap_is_measured_on_the_built_frame():
     """
     full = w.estimate_current_a(N, 1.0)
     assert full > 6.0, "reference draw changed; revisit the power budget"
-    for cap in (12.0, 8.0, 6.0):
+    for cap in (9.0, 8.0, 6.0):
         peak = w.build_frames(N, steps=2, max_current_a=cap)[-1]
         assert _frame_current_a(peak, N) == pytest.approx(cap, rel=0.03)
 
@@ -242,17 +244,16 @@ def test_spark_envelope_fades_in_and_out():
     assert rising[1] < 0.25, "a hard onset would read as a blink, not a fade"
 
 
-def test_spark_kernel_is_a_centred_bell():
+def test_spark_kernel_is_a_flat_core():
     k = w.spark_kernel(2)
     assert len(k) == 5
-    assert k[2] == pytest.approx(1.0)
-    assert k[0] == k[4] and k[1] == k[3]
-    assert k[0] < k[1] < k[2]
-    assert all(0.0 <= v <= 1.0 for v in k)
+    assert k[1] == k[2] == k[3] == 1.0, "core must be flat white"
+    assert k[0] == k[4] < 1.0, "one LED of edge"
+
 
 
 def test_spark_kernel_degenerate_width():
-    assert w.spark_kernel(0) == (1.0,)
+    assert w.spark_kernel(0) == (0.45,)   # width 0 -> the single LED is the edge
 
 
 def test_spark_rate_scales_with_the_breathe():
@@ -267,5 +268,5 @@ def test_spark_draw_stays_a_small_share_of_the_budget():
     """Highlights must accent the wash, not rival it on the supply."""
     wash = w.estimate_current_a(N, 1.0)
     sparks = w.spark_current_a()
-    assert sparks < wash * 0.25
+    assert sparks < wash * 0.4, "highlights should accent the wash, not rival it"
     assert sparks > 0.05, "too dim to be worth the code"

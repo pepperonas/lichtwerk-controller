@@ -148,7 +148,14 @@ def strip_t(i: int, n: int) -> float:
 # strip it reads flat — the peak of the breathe has no heat to it. A small white
 # floor that grows with the breathe puts that back. It is a pure function of the
 # phase, so it costs nothing: it goes straight into the precomputed frames.
-WHITE_PEAK = 58             # PWM added to every channel at the breathe maximum
+# Zero by design. A white floor across the whole chain desaturates every LED at
+# once, and because red is already near 255 the added green and blue push the
+# colour along red → orange → yellow → white. On 600 LEDs that reads as a warm
+# rainbow rather than a red warning. The breathe already carries plenty of
+# variation *within* red — (130,9,7) at the trough to (214,15,10) at the peak —
+# and that is the tone shift worth having. White belongs in the highlights,
+# where it can be crisp instead of a gradient.
+WHITE_PEAK = 0              # PWM added to every channel at the breathe maximum
 
 
 def white_lift(e: float, peak: int = WHITE_PEAK) -> int:
@@ -261,7 +268,7 @@ def release_gain(elapsed_s: float) -> int:
 # speed with a handful of LEDs overwritten, so the per-frame cost barely moves.
 SPARK_LIFE_S = 0.7          # birth → peak → gone
 SPARK_WIDTH = 2             # LEDs lit either side of the centre
-SPARK_PEAK = 215            # peak white added, in PWM units
+SPARK_MIX = 1.0             # 1.0 = core blends all the way to pure white
 SPARK_MAX = 18              # concurrent highlights (also bounds the extra draw)
 SPARK_RATE_IDLE = 2.0       # spawns/s at the breathe minimum
 SPARK_RATE_PEAK = 9.0       # spawns/s at the breathe maximum
@@ -279,16 +286,17 @@ def spark_envelope(age_s: float, life_s: float = SPARK_LIFE_S) -> float:
 
 
 def spark_kernel(width: int = SPARK_WIDTH):
-    """Spatial falloff so a highlight reads as a glow, not one lit pixel.
+    """Spatial profile of a spark: flat core, one LED of edge.
 
-    On a 10 m chain a single LED is a pinprick; spreading over a few gives it
-    presence without smearing it into the wash.
+    Same reason as the shimmer — intermediate amplitudes are the orange/yellow
+    band, so the profile spends as little width there as possible. A spark is a
+    clean white speck on red, not a small gradient.
     """
     width = max(0, int(width))
     out = []
     for off in range(-width, width + 1):
-        x = abs(off) / (width + 1.0)
-        out.append((1.0 - x * x) ** 2)
+        d = abs(off)
+        out.append(1.0 if d < width else 0.45)
     return tuple(out)
 
 
@@ -305,7 +313,7 @@ def spark_rate(e: float) -> float:
 # breathe so it swells with the wash instead of running independently of it.
 SHIMMER_COUNT = 3           # bands in flight, evenly spaced
 SHIMMER_WIDTH = 16          # LEDs of half-width — soft, not a dot
-SHIMMER_PEAK = 195          # PWM added at the band centre, at the breathe maximum
+SHIMMER_MIX = 1.0           # 1.0 = core blends all the way to pure white
 SHIMMER_SPEED = 88.0        # LEDs per second; 600 LEDs ≈ 7 s per pass
 
 
@@ -318,33 +326,56 @@ def shimmer_centre(elapsed_s: float, n: int, index: int = 0,
     return (elapsed_s * speed + index * span / count) % span
 
 
+SHIMMER_PLATEAU = 0.72      # fraction of the half-width held at full white
+
+
 def shimmer_amp(offset: float, e: float, width: int = SHIMMER_WIDTH,
-                peak: int = SHIMMER_PEAK) -> float:
-    """White added `offset` LEDs from a band centre at breathe phase e."""
+                mix: float = SHIMMER_MIX) -> float:
+    """Blend factor toward white `offset` LEDs from a band centre.
+
+    A *mix*, not an amount to add. Adding a fixed value can never land on pure
+    white — 195 onto a (214,15,10) base gives (255,210,205), a pale yellow — and
+    the shortfall differs along the strip because the base does. Blending
+    toward white reaches (255,255,255) exactly, wherever it lands.
+
+    Flat core with a short edge, not a bell. A bell spends most of its width in
+    the middle amplitudes, and those are exactly the values that render as
+    orange and yellow: red clips at 255 while green and blue are still climbing.
+    Holding full white across the core and falling off over the last quarter
+    keeps that transition down to a few LEDs, so it reads as a white band on red
+    rather than a colour sweep.
+    """
     if width <= 0:
         return 0.0
     x = abs(offset) / float(width)
     if x >= 1.0:
         return 0.0
-    # Cosine bell: no visible edge where the band ends.
-    bell = 0.5 * (1.0 + math.cos(math.pi * x))
-    return peak * bell * max(0.0, min(1.0, e))
+    if x <= SHIMMER_PLATEAU:
+        k = 1.0
+    else:
+        u = (x - SHIMMER_PLATEAU) / (1.0 - SHIMMER_PLATEAU)
+        k = 0.5 * (1.0 + math.cos(math.pi * u))
+    return mix * k * max(0.0, min(1.0, e))
 
 
-def shimmer_current_a(peak: int = SHIMMER_PEAK, width: int = SHIMMER_WIDTH,
-                      count: int = SHIMMER_COUNT) -> float:
-    """Worst-case extra draw from the shimmer bands."""
+def shimmer_current_a(width: int = SHIMMER_WIDTH, count: int = SHIMMER_COUNT,
+                      base: int = 90) -> float:
+    """Worst-case extra draw from the shimmer bands.
+
+    `base` is the mean channel value the blend starts from; only the headroom
+    to 255 is new current.
+    """
     per_led = 0.0
     for off in range(-width, width + 1):
-        per_led += shimmer_amp(off, 1.0, width, peak) / 255.0
+        per_led += shimmer_amp(off, 1.0, width) * (255 - base) / 255.0
     return per_led * 3 * MA_PER_CHANNEL * count
 
 
-def spark_current_a(peak: int = SPARK_PEAK, width: int = SPARK_WIDTH,
-                    count: int = SPARK_MAX) -> float:
-    """Worst-case extra draw from highlights, for the power budget."""
+def spark_current_a(width: int = SPARK_WIDTH, count: int = SPARK_MAX,
+                    base: int = 90) -> float:
+    """Worst-case extra draw from the sparks, for the power budget."""
     kernel = spark_kernel(width)
-    per = sum(kernel) * 3 * (peak / 255.0) * MA_PER_CHANNEL
+    per = sum(kernel) * SPARK_MIX * (255 - base) / 255.0 * 3 * MA_PER_CHANNEL
     return per * count
 
 

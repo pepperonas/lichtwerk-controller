@@ -791,13 +791,22 @@ class LichtwerkWebController:
 
         buf = bytearray(base)
 
-        def add_at(i, amount):
-            if amount <= 0:
+        def blend_white(i, k):
+            """Blend LED i toward pure white by factor k (0..1).
+
+            A blend, not an addition: adding a fixed amount can never reach
+            255 on every channel, so cores came out pale yellow, and the miss
+            differed along the strip because the base does. Blending lands on
+            white exactly, wherever it starts.
+            """
+            if k <= 0.0:
                 return
+            if k > 1.0:
+                k = 1.0
             j = (i % n) * 4
             for c in (j, j + 1, j + 2):
-                v = buf[c] + amount
-                buf[c] = 255 if v > 255 else v
+                v = buf[c]
+                buf[c] = v + int((255 - v) * k)
 
         # Shimmer first: sparks should still read as the brighter accent on top.
         if self._wash_shimmer_on:
@@ -807,7 +816,8 @@ class LichtwerkWebController:
                 centre = iris_wash.shimmer_centre(elapsed, n, k)
                 base_i = int(centre)
                 for off in range(-w, w + 1):
-                    add_at(base_i + off, int(iris_wash.shimmer_amp(base_i + off - centre, e)))
+                    blend_white(base_i + off,
+                                iris_wash.shimmer_amp(base_i + off - centre, e))
 
         kernel = self._wash_kernel
         sw = iris_wash.SPARK_WIDTH
@@ -815,11 +825,11 @@ class LichtwerkWebController:
             env = iris_wash.spark_envelope(age)
             if env <= 0.0:
                 continue
-            amp = env * iris_wash.SPARK_PEAK
+            amp = env * iris_wash.SPARK_MIX
             for k, off in enumerate(range(-sw, sw + 1)):
                 i = centre + off
                 if 0 <= i < n:
-                    add_at(i, int(amp * kernel[k]))
+                    blend_white(i, amp * kernel[k])
         return bytes(buf)
 
     def run_effect(self):
