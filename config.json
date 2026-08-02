@@ -14,7 +14,12 @@
         "exposure": 1.8,
         "max_current_a": null,
         "sparks": true,
-        "shimmer": true
+        "shimmer": true,
+        "white_point": [
+            255,
+            178,
+            217
+        ]
     },
     "default_effect": "rainbow",
     "effects": {

@@ -270,3 +270,35 @@ def test_spark_draw_stays_a_small_share_of_the_budget():
     sparks = w.spark_current_a()
     assert sparks < wash * 0.4, "highlights should accent the wash, not rival it"
     assert sparks > 0.05, "too dim to be worth the code"
+
+
+# ---- white point -----------------------------------------------------------
+
+def test_white_point_is_not_equal_pwm():
+    """Equal duty on a WS2812B is not white.
+
+    The green die is roughly twice as luminous per PWM step as the red one and
+    blue about half, so (255,255,255) renders green-tinted — and the blend path
+    to it passes through yellow. That was the cast; it was never a colour
+    choice.
+    """
+    r, g, b = w.WHITE_POINT
+    assert r == 255
+    assert g < r, "green must be pulled down or the point renders green"
+    assert g < b, "blue sits above green in a balanced WS2812 white"
+
+
+def test_blend_path_never_goes_yellow_green():
+    """Walk the whole blend and check no step lands in the yellow/green wedge."""
+    base = w.led_rgb(300, N, 1.0)
+    for i in range(21):
+        r, g, b = w.white_target(i / 20, base)
+        if g > 40:                      # below that it is simply red
+            assert not (g > r * 0.92 and b < g * 0.75), \
+                f"yellow/green at mix {i/20:.2f}: {(r,g,b)}"
+
+
+def test_blend_endpoints():
+    base = (214, 15, 10)
+    assert w.white_target(0.0, base) == base
+    assert w.white_target(1.0, base) == w.WHITE_POINT

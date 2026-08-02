@@ -268,7 +268,15 @@ def release_gain(elapsed_s: float) -> int:
 # speed with a handful of LEDs overwritten, so the per-frame cost barely moves.
 SPARK_LIFE_S = 0.7          # birth → peak → gone
 SPARK_WIDTH = 2             # LEDs lit either side of the centre
-SPARK_MIX = 1.0             # 1.0 = core blends all the way to pure white
+# White on a WS2812B is not (255,255,255). The green die is roughly twice as
+# luminous per PWM step as the red one and blue about half — so equal duty
+# renders green-tinted, and the path from red to it passes through yellow. That
+# is the yellow/green cast: it was never a colour choice, it was an unbalanced
+# white point. Scaling green and blue down puts the blend on a red → warm pink →
+# neutral white path instead. Strip-specific; override in config.json.
+WHITE_POINT = (255, 178, 217)
+
+SPARK_MIX = 1.0             # 1.0 = core blends all the way to the white point
 SPARK_MAX = 18              # concurrent highlights (also bounds the extra draw)
 SPARK_RATE_IDLE = 2.0       # spawns/s at the breathe minimum
 SPARK_RATE_PEAK = 9.0       # spawns/s at the breathe maximum
@@ -358,6 +366,12 @@ def shimmer_amp(offset: float, e: float, width: int = SHIMMER_WIDTH,
     return mix * k * max(0.0, min(1.0, e))
 
 
+def white_target(mix: float, base_rgb, point=WHITE_POINT):
+    """Blend `base_rgb` toward the calibrated white point by `mix` (0..1)."""
+    m = max(0.0, min(1.0, mix))
+    return tuple(int(round(c + (p - c) * m)) for c, p in zip(base_rgb, point))
+
+
 def shimmer_current_a(width: int = SHIMMER_WIDTH, count: int = SHIMMER_COUNT,
                       base: int = 90) -> float:
     """Worst-case extra draw from the shimmer bands.
@@ -365,17 +379,19 @@ def shimmer_current_a(width: int = SHIMMER_WIDTH, count: int = SHIMMER_COUNT,
     `base` is the mean channel value the blend starts from; only the headroom
     to 255 is new current.
     """
+    head = sum(max(0, p - base) for p in WHITE_POINT) / 255.0
     per_led = 0.0
     for off in range(-width, width + 1):
-        per_led += shimmer_amp(off, 1.0, width) * (255 - base) / 255.0
-    return per_led * 3 * MA_PER_CHANNEL * count
+        per_led += shimmer_amp(off, 1.0, width) * head
+    return per_led * MA_PER_CHANNEL * count
 
 
 def spark_current_a(width: int = SPARK_WIDTH, count: int = SPARK_MAX,
                     base: int = 90) -> float:
     """Worst-case extra draw from the sparks, for the power budget."""
     kernel = spark_kernel(width)
-    per = sum(kernel) * SPARK_MIX * (255 - base) / 255.0 * 3 * MA_PER_CHANNEL
+    head = sum(max(0, p - base) for p in WHITE_POINT) / 255.0
+    per = sum(kernel) * SPARK_MIX * head * MA_PER_CHANNEL
     return per * count
 
 

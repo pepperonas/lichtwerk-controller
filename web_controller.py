@@ -76,6 +76,8 @@ class LichtwerkWebController:
         self._wash_fade_from = 0       # frame the fade started from
         # White highlights on top of the wash — sparse, so the base frame stays
         # precomputed and only a handful of LEDs are rewritten per frame.
+        wp = wash_cfg.get('white_point') or iris_wash.WHITE_POINT
+        self._wash_white_point = tuple(max(0, min(255, int(v))) for v in wp)
         self._wash_sparks_on = bool(wash_cfg.get('sparks', True))
         self._wash_shimmer_on = bool(wash_cfg.get('shimmer', True))
         self._wash_sparks = []         # [(centre_led, age_s), ...]
@@ -790,23 +792,27 @@ class LichtwerkWebController:
             return base
 
         buf = bytearray(base)
+        wp = self._wash_white_point
 
         def blend_white(i, k):
             """Blend LED i toward pure white by factor k (0..1).
 
-            A blend, not an addition: adding a fixed amount can never reach
-            255 on every channel, so cores came out pale yellow, and the miss
-            differed along the strip because the base does. Blending lands on
-            white exactly, wherever it starts.
+            A blend, not an addition, and toward a *calibrated* white point
+            rather than (255,255,255): equal PWM on a WS2812B renders green,
+            because the green die is about twice as luminous per step. Blending
+            to the balanced point keeps the path red → warm pink → white with no
+            yellow-green excursion, and lands on the same tone wherever it
+            starts.
             """
             if k <= 0.0:
                 return
             if k > 1.0:
                 k = 1.0
             j = (i % n) * 4
-            for c in (j, j + 1, j + 2):
-                v = buf[c]
-                buf[c] = v + int((255 - v) * k)
+            for ch in range(3):
+                v = buf[j + ch]
+                tgt = wp[ch]
+                buf[j + ch] = v + int((tgt - v) * k) if tgt > v else v
 
         # Shimmer first: sparks should still read as the brighter accent on top.
         if self._wash_shimmer_on:
