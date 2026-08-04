@@ -188,9 +188,13 @@ h4 {
 .control-section {
     background: var(--card-background);
     border-radius: var(--radius-xl);
-    padding: var(--spacing-6);
-    box-shadow: var(--shadow);
-    border: 1px solid rgba(255, 255, 255, 0.05);
+    /* Kontur und Polster aus den Tokens. Ein Weiss-Alpha-Rahmen ergibt auf
+       #1c1d23 rund #2f3036 und damit eine deutlich schwaechere Kontur als
+       --sh-outline — nebeneinander sah dieselbe Karte hier anders aus als
+       drueben. Polster ebenso: 24 px gegen 18,4/19,2/16 im Massstab. */
+    padding: var(--sh-card-pad);
+    box-shadow: none;
+    border: 1px solid var(--sh-outline);
     transition: all 0.3s ease;
     animation: fadeIn 0.6s ease-out;
     position: relative;
