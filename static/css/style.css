@@ -71,9 +71,12 @@ header {
     justify-content: space-between;
     align-items: center;
     flex-wrap: wrap;
-    padding: var(--spacing-6);
-    background: var(--card-background);
-    border-radius: var(--radius-xl);
+    /* Der Kopf ist Teil der Seite, keine Karte: ohne Flaeche, ohne Rundung,
+       ohne eigenes Oberpolster (die 20 px zum Leistenrand kommen vom body).
+       Als Karte stand er als einziger im Stack in einem eigenen Kasten. */
+    padding: 0 0 var(--sh-gap-lg);
+    background: transparent;
+    border-radius: 0;
     box-shadow: var(--shadow);
     gap: var(--spacing-4);
 }
