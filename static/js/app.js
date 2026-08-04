@@ -222,10 +222,10 @@ class LichtwerkController {
     
     setConnectionStatus(connected) {
         if (connected) {
-            this.statusText.textContent = 'Connected';
+            this.statusText.textContent = 'live';
             this.statusDot.classList.add('connected');
         } else {
-            this.statusText.textContent = 'Disconnected';
+            this.statusText.textContent = 'offline';
             this.statusDot.classList.remove('connected');
         }
     }

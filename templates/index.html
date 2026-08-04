@@ -87,7 +87,30 @@
       *,*::before,*::after{ animation-duration:.01ms!important; animation-iteration-count:1!important; transition-duration:.01ms!important; scroll-behavior:auto!important; }
       .control-section::after{ display:none!important; }
     }
-    </style>
+    
+/* ---- Statusanzeige: Referenzform (siehe shared/theme.css .sh-live) --------
+   Punkt + Wort in einer Pille. Gruen = Verbindung steht. Die Textbreite ist
+   fixiert, weil das Wort wechselt und die paar Pixel Unterschied sonst
+   Nachbar-Elemente auf schmalen Breiten umbrechen lassen. */
+.status-indicator{
+  display:inline-flex; align-items:center; gap:.45rem;
+  color:var(--sh-text2); font-size:.82rem; font-weight:400;
+  padding:.4rem .7rem; border-radius:var(--sh-pill);
+  border:1px solid var(--sh-outline);
+  background:color-mix(in srgb, var(--sh-text) 3%, transparent);
+  min-width:0;
+}
+.status-indicator::before{
+  content:''; width:8px; height:8px; border-radius:50%;
+  background:var(--sh-muted); flex:0 0 auto;
+}
+.status-connected{ background:color-mix(in srgb, var(--sh-text) 3%, transparent);
+                   color:var(--sh-text2); }
+.status-connected::before{ background:var(--sh-ok); box-shadow:0 0 10px var(--sh-ok); }
+.status-disconnected{ background:color-mix(in srgb, var(--sh-text) 3%, transparent);
+                      color:var(--sh-text2); }
+.status-disconnected::before{ background:var(--sh-muted); box-shadow:none; }
+</style>
     <script src="/shared/icons.js?v=1" defer></script>
     <script src="/shared/nav.js?v=7" defer></script>
     <link rel="icon" type="image/svg+xml" href="static/favicon.svg">
@@ -98,7 +121,7 @@
         <header>
             <h1><span class="sh-icon" data-sh-icon="rainbow" aria-hidden="true" style="vertical-align:-0.12em;margin-right:.35rem"></span> Lichtwerk Controller</h1>
             <div class="status-indicator" id="status-indicator">
-                <span id="status-text">Connecting...</span>
+                <span id="status-text">verbinde…</span>
                 <div class="status-dot" id="status-dot"></div>
             </div>
         </header>
