@@ -724,119 +724,76 @@ class LichtwerkWebController:
         self._cleared = False
 
     def effect_iris_warn(self):
-        """Paint the dB-Analyse page wash (`body.over-iris`) onto the chain.
+        """Hard Iris blitz — LED translation of dB-Analyse `over-iris`.
 
-        The colour maths lives in `iris_wash`: a faithful port of the page's
-        radial gradient, breathe keyframes and cubic-bezier easing, gamma
-        corrected into the WS2812's linear PWM domain. The whole breathe is
-        precomputed at arm time, so a frame costs an index lookup and a write.
+        On screen the crimson wash pops against a dark page; soft red-on-dim-red
+        on WS2812 only 'glows'. LEDs need binary contrast: FULL crimson ↔ BLACK.
 
-        `strip_warn_over` is the gate — the same bit the page renders as
-        `over-iris`. Under threshold the strip fades out and stays black.
+        Timing:
+          1) Engage double-pulse (class applied → hard snap)
+          2) Sustain square flash @ body-transition period (.55s), ~65% duty
+          3) On each ON edge: dense white LED sparks for ~55 ms
+        Local ~60 fps — no HTTP frame spam from disco.
         """
         if not self.strip:
             return
-        if not self.power or not self.strip_warn_over:
-            if self._wash_fade_t0 is not None:
-                self._paint_wash_fade()
-            elif not self._cleared:
-                self._iris_abort()
+        import random
+        import time as _time
+        t0 = self.effect_params.get('iris_t0')
+        if t0 is None:
+            t0 = _time.monotonic()
+            self.effect_params['iris_t0'] = t0
+            self.effect_params['iris_lit'] = None
+            self.effect_params['iris_sparking'] = None
+            self.effect_params['iris_spark_until'] = 0.0
+        t = _time.monotonic() - t0
+
+        # CSS peak rgba(255,70,55) — full punch, flat strip (no radial soft)
+        hr, hg, hb = 255, 70, 55
+
+        # ── Engage: two hard pulses (Aufleuchten) ──
+        # ON 70ms · OFF 60ms · ON 80ms, then sustain
+        if t < 0.21:
+            lit = not (0.07 <= t < 0.13)
+        else:
+            # Square wave keyed to body transition (.55s) — hard edges only
+            period = 0.55
+            u = ((t - 0.21) / period) % 1.0
+            lit = u < 0.65  # ~65% ON / 35% BLACK
+
+        last = self.effect_params.get('iris_lit')
+        if lit and last is not True:
+            # Rising edge → arm a ~55 ms white-spark window
+            self.effect_params['iris_spark_until'] = t + 0.055
+        spark = bool(lit and t < float(self.effect_params.get('iris_spark_until') or 0))
+        last_spark = self.effect_params.get('iris_sparking')
+        if last is lit and last_spark is spark:
+            return  # only rewrite on lit/spark edges
+        self.effect_params['iris_lit'] = lit
+        self.effect_params['iris_sparking'] = spark
+
+        if not lit:
+            self.clear()
             return
 
-        frames = self._wash_frames()
-        if not frames:
-            return
-        if self._wash_t0 is None:
-            self._wash_engage()
-        now = time.monotonic()
-        idx = iris_wash.frame_index(now - self._wash_t0, len(frames))
-        payload = frames[idx]
-        if self._wash_sparks_on or self._wash_shimmer_on:
-            payload = self._paint_overlay(payload, idx, len(frames), now)
-        with self._strip_lock:
-            # Re-check under the lock so a concurrent release is not overpainted
-            if not self.power or not self.strip_warn_over:
-                return
-            self._show_payload(payload)
+        scale = max(0.0, min(1.0, self.brightness / 255.0))
+        c = Color(int(hr * scale), int(hg * scale), int(hb * scale))
+        n = self.strip.numPixels()
+        if hasattr(self.strip, 'fill'):
+            self.strip.fill(c)
+        else:
+            for i in range(n):
+                self.strip.setPixelColor(i, c)
+        if spark and n > 0:
+            w = Color(int(255 * scale), int(255 * scale), int(255 * scale))
+            # ~8% of strip (was ~12 LEDs); cap so crimson base stays visible
+            k = min(n, min(80, max(24 if n >= 48 else 3, n // 12)))
+            k = min(k, max(1, (n * 2) // 5))  # ≤40% white
+            rng = random.Random(int(t0 * 1000) ^ int(t * 200))
+            for i in rng.sample(range(n), k):
+                self.strip.setPixelColor(i, w)
+        self.strip.show()
         self._cleared = False
-
-    def _paint_overlay(self, base, idx, steps, now):
-        """Lay the white layers over the precomputed wash frame.
-
-        Two of them, doing different jobs: a travelling shimmer you can follow
-        with your eyes across 10 m, and sparks as the sharper, shorter accent on
-        top. Both are sparse, so a frame stays a C-speed copy of the precomputed
-        base with a few hundred bytes rewritten. Added additively because the
-        payload is already in linear PWM space, which is where light sums.
-        """
-        dt = now - (self._wash_spark_ts if self._wash_spark_ts is not None else now)
-        self._wash_spark_ts = now
-        n = self.strip.numPixels() if self.strip else 0
-        if n <= 0:
-            return base
-
-        e = idx / max(1, steps - 1)          # breathe phase drives both layers
-
-        alive = []
-        if self._wash_sparks_on:
-            alive = [(c, a + dt) for c, a in self._wash_sparks
-                     if a + dt < iris_wash.SPARK_LIFE_S]
-            expected = iris_wash.spark_rate(e) * dt
-            while expected > 0.0 and len(alive) < iris_wash.SPARK_MAX:
-                if random.random() < min(1.0, expected):
-                    alive.append((random.randrange(n), 0.0))
-                expected -= 1.0
-            self._wash_sparks = alive
-
-        if not alive and not self._wash_shimmer_on:
-            return base
-
-        buf = bytearray(base)
-        wp = self._wash_white_point
-
-        def blend_white(i, k):
-            """Blend LED i toward pure white by factor k (0..1).
-
-            A blend, not an addition, and toward a *calibrated* white point
-            rather than (255,255,255): equal PWM on a WS2812B renders green,
-            because the green die is about twice as luminous per step. Blending
-            to the balanced point keeps the path red → warm pink → white with no
-            yellow-green excursion, and lands on the same tone wherever it
-            starts.
-            """
-            if k <= 0.0:
-                return
-            if k > 1.0:
-                k = 1.0
-            j = (i % n) * 4
-            for ch in range(3):
-                v = buf[j + ch]
-                tgt = wp[ch]
-                buf[j + ch] = v + int((tgt - v) * k) if tgt > v else v
-
-        # Shimmer first: sparks should still read as the brighter accent on top.
-        if self._wash_shimmer_on:
-            elapsed = now - (self._wash_t0 if self._wash_t0 is not None else now)
-            w = iris_wash.SHIMMER_WIDTH
-            for k in range(iris_wash.SHIMMER_COUNT):
-                centre = iris_wash.shimmer_centre(elapsed, n, k)
-                base_i = int(centre)
-                for off in range(-w, w + 1):
-                    blend_white(base_i + off,
-                                iris_wash.shimmer_amp(base_i + off - centre, e))
-
-        kernel = self._wash_kernel
-        sw = iris_wash.SPARK_WIDTH
-        for centre, age in alive:
-            env = iris_wash.spark_envelope(age)
-            if env <= 0.0:
-                continue
-            amp = env * iris_wash.SPARK_MIX
-            for k, off in enumerate(range(-sw, sw + 1)):
-                i = centre + off
-                if 0 <= i < n:
-                    blend_white(i, amp * kernel[k])
-        return bytes(buf)
 
     def run_effect(self):
         if self._wash_fade_t0 is not None:
@@ -874,28 +831,15 @@ class LichtwerkWebController:
 
     def start_effect_loop(self):
         def effect_loop():
-            deadline = time.monotonic()
             while self.running:
                 try:
                     self.run_effect()
-                    washing = (self.current_effect == 'iris_warn'
-                               or self._wash_fade_t0 is not None)
-                    if washing:
-                        # Deadline pacing, not sleep-after-work: the frame
-                        # budget stays honest regardless of paint time. If we
-                        # fall behind we skip ahead instead of queueing frames
-                        # into an in-flight DMA transfer.
-                        now = time.monotonic()
-                        deadline += WASH_FRAME_S
-                        if deadline < now:
-                            deadline = now + WASH_FRAME_S
-                        sleep_time = deadline - now
+                    if self.current_effect == 'iris_warn':
+                        sleep_time = 0.008  # ~125 Hz poll — edges land within ~8 ms
                     else:
                         sleep_time = max(0.01, (101 - self.speed) / 1000.0)
-                        deadline = time.monotonic() + sleep_time
                     # Interruptible sleep: API changes paint on the next wake
-                    if self._effect_wake.wait(timeout=sleep_time):
-                        deadline = time.monotonic()
+                    self._effect_wake.wait(timeout=sleep_time)
                     self._effect_wake.clear()
                 except Exception as e:
                     print(f"Effect error: {e}")
@@ -1078,21 +1022,18 @@ def set_effect():
         elif effect == 'fire':
             controller.effect_params['fire_heat'] = [0] * (controller.strip.numPixels() if controller.strip else 600)
         elif effect == 'iris_warn':
-            # Arm Strip-Warn. over=false → dark + power off until warn_gate
-            controller._wash_t0 = None
-            controller._wash_fade_t0 = None
-            controller._wash_frames()   # precompute now, not on the first edge
+            controller.effect_params['iris_t0'] = None
+            controller.effect_params['iris_lit'] = None
+            controller.effect_params['iris_sparking'] = None
+            controller.effect_params['iris_spark_until'] = 0.0
+            # Full punch + auto-power: one POST from disco engages the strip
             controller.brightness = 255
-            controller.strip_warn_mode = True
-            over = bool(data.get('over', False))
-            controller.strip_warn_over = over
-            controller.power = bool(over)
+            controller.power = True
+            # Paint first frame in-request → LED lights before HTTP returns
             try:
                 controller.run_effect()
             except Exception as e:
                 print(f"iris_warn first frame: {e}")
-            if not over:
-                controller._iris_abort()
 
         controller.wake_effect()
         return jsonify({'status': 'ok', 'effect': controller.current_effect, 'power': controller.power})

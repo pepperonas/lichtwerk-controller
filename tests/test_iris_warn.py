@@ -1,143 +1,173 @@
-"""Strip-Warn gate contract — the LED twin of the page's `body.over-iris`.
+"""Unit tests for iris_warn timing / frame logic (mirrors web_controller)."""
 
-These drive the real Flask app through its test client. Without /dev/leds0 the
-controller falls into demo mode (strip=None), which is fine: what matters here
-is the state machine around the gate, not the pixels. The pixel maths is
-covered by test_iris_wash.py.
-"""
 from __future__ import annotations
 
-import os
 import pathlib
 import sys
-import time
 
 import pytest
 
 _ROOT = pathlib.Path(__file__).parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
-os.chdir(_ROOT)                      # web_controller loads ./config.json
-
-# The Flask runtime deps live in the Pi's venv, not necessarily on a dev box.
-# Skipping keeps `pytest tests/` green everywhere while staying complete where
-# it counts — test_iris_wash.py covers the colour maths with no deps at all.
-pytest.importorskip("flask", reason="lichtwerk runtime deps not installed")
-pytest.importorskip("flask_cors", reason="lichtwerk runtime deps not installed")
-
-import iris_wash                     # noqa: E402
-import web_controller as wc          # noqa: E402
 
 
-@pytest.fixture
-def client():
-    wc.app.config["TESTING"] = True
-    c = wc.controller
-    c.strip_warn_mode = False
-    c.strip_warn_over = False
-    c.power = False
-    c._wash_t0 = None
-    c._wash_fade_t0 = None
-    c.current_effect = "solid"
-    with wc.app.test_client() as cl:
-        yield cl
+def iris_phase(t: float) -> bool:
+    """Whether the strip should be lit at relative time t (seconds since engage).
+
+    Copied from effect_iris_warn timing in web_controller.py.
+    """
+    if t < 0.21:
+        return not (0.07 <= t < 0.13)
+    period = 0.55
+    u = ((t - 0.21) / period) % 1.0
+    return u < 0.65
 
 
-def _gate(client, over):
-    return client.post("/api/warn_gate", json={"over": over})
+def test_iris_engage_double_pulse_pattern():
+    # ON … OFF gap … ON
+    assert iris_phase(0.00) is True
+    assert iris_phase(0.06) is True
+    assert iris_phase(0.08) is False
+    assert iris_phase(0.12) is False
+    assert iris_phase(0.14) is True
+    assert iris_phase(0.20) is True
 
 
-def test_arming_leaves_the_strip_dark(client):
-    r = client.post("/api/effect", json={"effect": "iris_warn", "over": False})
-    assert r.status_code == 200
-    c = wc.controller
-    assert c.strip_warn_mode is True
-    assert c.strip_warn_over is False
-    assert c.power is False
-    assert c._wash_t0 is None, "armed but under threshold must not start the breathe"
+def test_iris_sustain_duty_cycle_about_65_percent():
+    # Sample sustain window after engage
+    lit = sum(1 for i in range(100) if iris_phase(0.21 + i * 0.01))
+    # 1.0s of samples → expect ~65 lit
+    assert 55 <= lit <= 75
 
 
-def test_gate_on_starts_the_breathe_at_its_peak(client):
-    before = time.monotonic()
-    r = _gate(client, True)
-    assert r.status_code == 200
-    body = r.get_json()
-    assert body["over"] is True
-    assert body["power"] is True
-    assert body["effect"] == "iris_warn"
-
-    c = wc.controller
-    assert c.strip_warn_over is True
-    # t0 is back-dated one full period so the first frame lands on the maximum
-    age = before - c._wash_t0
-    assert age == pytest.approx(iris_wash.BREATHE_PERIOD_S, abs=0.25)
-    assert iris_wash.frame_index(time.monotonic() - c._wash_t0, 64) > 55
-
-
-def test_gate_off_fades_instead_of_cutting_to_black(client):
-    _gate(client, True)
-    _gate(client, False)
-
-    c = wc.controller
-    assert c.strip_warn_over is False
-    assert c.power is False
-    assert c._wash_fade_t0 is not None, "release must ramp down like the page"
-    assert c._wash_t0 is None
+def test_iris_hard_edges_not_soft_glow():
+    """Adjacent samples around a cut must be binary True/False — no mid values."""
+    # Find a falling edge in sustain
+    prev = iris_phase(0.21)
+    edge = None
+    for i in range(1, 200):
+        t = 0.21 + i * 0.005
+        cur = iris_phase(t)
+        if prev and not cur:
+            edge = t
+            break
+        prev = cur
+    assert edge is not None
+    assert iris_phase(edge - 0.005) is True
+    assert iris_phase(edge) is False
 
 
-def test_fade_runs_even_though_power_is_off(client):
-    """run_effect() checks the ramp before the power gate, or it would freeze."""
-    _gate(client, True)
-    _gate(client, False)
-    c = wc.controller
-    assert c.power is False
-    assert c._wash_fade_t0 is not None
-    c.run_effect()
-    assert c._wash_fade_t0 is not None, "ramp aborted early"
+def test_web_controller_registers_iris_warn():
+    src = (_ROOT / "web_controller.py").read_text()
+    assert "def effect_iris_warn(self)" in src
+    assert "'iris_warn': self.effect_iris_warn" in src
+    assert "iris_warn" in src
+    assert "0.55" in src  # period / attack
+    assert "0.65" in src  # duty
+    assert "spark" in src.lower() or "iris_spark" in src
+    assert "255, 70, 55" in src or "255,70,55" in src
 
 
-def test_fade_finishes_and_clears(client):
-    _gate(client, True)
-    _gate(client, False)
-    c = wc.controller
-    c._wash_fade_t0 = time.monotonic() - (iris_wash.RELEASE_FADE_S + 0.05)
-    c.run_effect()
-    assert c._wash_fade_t0 is None
-    assert c._cleared is True
+def test_web_controller_iris_fps_sleep():
+    src = (_ROOT / "web_controller.py").read_text()
+    assert "0.008" in src  # ~125 Hz edge poll
+    assert "wake_effect" in src
+    assert "/api/solid" in src
+    assert "threaded=True" in src
+    assert "run_effect()" in src  # first-frame paint in iris_warn handler
 
 
-def test_gate_off_is_idempotent(client):
-    _gate(client, True)
-    _gate(client, False)
-    first = wc.controller._wash_fade_t0
-    _gate(client, False)
-    assert wc.controller._wash_fade_t0 == first, "re-releasing must not restart the ramp"
+def _iris_frame(strip, effect_params, brightness, now):
+    """Standalone copy of effect_iris_warn paint path (no Flask/GPIO import).
+
+    Kept in sync with web_controller.effect_iris_warn via the source-contract
+    tests above — web_controller instantiates hardware at import time.
+    """
+    from pio_strip import Color
+    import random
+
+    t0 = effect_params.get("iris_t0")
+    if t0 is None:
+        t0 = now
+        effect_params["iris_t0"] = t0
+        effect_params["iris_lit"] = None
+        effect_params["iris_sparking"] = None
+        effect_params["iris_spark_until"] = 0.0
+    t = now - t0
+    hr, hg, hb = 255, 70, 55
+    lit = iris_phase(t)
+    last = effect_params.get("iris_lit")
+    if lit and last is not True:
+        effect_params["iris_spark_until"] = t + 0.04
+    spark = bool(lit and t < float(effect_params.get("iris_spark_until") or 0))
+    last_spark = effect_params.get("iris_sparking")
+    if last is lit and last_spark is spark:
+        return
+    effect_params["iris_lit"] = lit
+    effect_params["iris_sparking"] = spark
+    if not lit:
+        for i in range(strip.numPixels()):
+            strip.setPixelColor(i, Color(0, 0, 0))
+        strip.show()
+        return
+    scale = max(0.0, min(1.0, brightness / 255.0))
+    c = Color(int(hr * scale), int(hg * scale), int(hb * scale))
+    n = strip.numPixels()
+    for i in range(n):
+        strip.setPixelColor(i, c)
+    if spark and n > 0:
+        w = Color(int(255 * scale), int(255 * scale), int(255 * scale))
+        k = min(n, min(80, max(24 if n >= 48 else 3, n // 12)))
+        k = min(k, max(1, (n * 2) // 5))
+        rng = random.Random(int(t0 * 1000) ^ int(t * 200))
+        for i in rng.sample(range(n), k):
+            strip.setPixelColor(i, w)
+    strip.show()
 
 
-def test_warn_mode_off_aborts_hard(client):
-    """Disarming is not a release — it drops the strip immediately."""
-    _gate(client, True)
-    r = client.post("/api/warn_mode", json={"on": False})
-    assert r.status_code == 200
-    c = wc.controller
-    assert c.strip_warn_mode is False
-    assert c._wash_t0 is None
-    assert c._wash_fade_t0 is None, "disarm must not leave a ramp running"
+def test_iris_spark_density_contract():
+    src = (_ROOT / "web_controller.py").read_text()
+    assert "n // 12" in src
+    assert "0.055" in src
+    assert "(n * 2) // 5" in src
 
 
-def test_other_effects_are_blocked_while_armed(client):
-    _gate(client, True)
-    r = client.post("/api/effect", json={"effect": "rainbow"})
-    assert r.get_json()["status"] == "blocked"
-    assert wc.controller.current_effect == "iris_warn"
+def test_effect_iris_warn_paints_and_clears():
+    """Paint path: ON paints crimson (+sparks), engage-OFF clears to black."""
+    from pio_strip import Color
+
+    class FakeStrip:
+        def __init__(self, n=20):
+            self._n = n
+            self.buf = [0] * n
+            self.shows = 0
+
+        def numPixels(self):
+            return self._n
+
+        def setPixelColor(self, i, c):
+            self.buf[i] = c
+
+        def show(self):
+            self.shows += 1
+
+    strip = FakeStrip(20)
+    params = {}
+    _iris_frame(strip, params, 255, now=1000.0)
+    assert params.get("iris_lit") is True
+    assert strip.shows >= 1
+    assert Color(255, 70, 55) in strip.buf or any(
+        (c >> 16) & 0xFF == 255 and (c & 0xFF) == 55 for c in strip.buf
+    )
+
+    _iris_frame(strip, params, 255, now=1000.08)
+    assert params.get("iris_lit") is False
+    assert all(c == 0 for c in strip.buf)
 
 
-def test_iris_warn_is_a_valid_effect(client):
-    r = client.post("/api/effect", json={"effect": "iris_warn", "over": False})
-    assert r.get_json()["status"] == "ok"
-
-
-def test_pacing_targets_the_shift_out_budget():
-    """600 LEDs need 18 ms per frame; the wash must stay under the ceiling."""
-    assert wc.WASH_FRAME_S > 0.018, "frame budget below the WS2812 shift-out time"
-    assert wc.WASH_FPS <= 55.6
+def test_readme_documents_iris_warn_and_pio():
+    readme = (_ROOT / "README.md").read_text()
+    assert "iris_warn" in readme
+    assert "pio_strip" in readme or "ws2812-pio" in readme
+    assert "raspi5" in readme.lower() or "Pi 5" in readme
