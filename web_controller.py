@@ -107,7 +107,17 @@ class LichtwerkWebController:
         print('\nShutting down...')
         self.running = False
         self._effect_wake.set()
-        self.clear()
+        # Order matters: a frame past the `running` check can still paint AFTER
+        # an early clear — the strip would sit lit (or holding a corrupted
+        # frame) with nobody left to blank it until the next service start.
+        # Join the painter first, then run the PROVEN double-clear so the last
+        # frames on the wire are two black ones.
+        if self.effect_thread and self.effect_thread.is_alive():
+            try:
+                self.effect_thread.join(timeout=0.5)
+            except Exception:
+                pass
+        self.clear(force=True)
         if self.strip and hasattr(self.strip, 'close'):
             try:
                 self.strip.close()
@@ -792,9 +802,22 @@ class LichtwerkWebController:
         snap = False
         while q:
             try:
-                ks = max(0.0, min(1.0, float(q.pop(0))))
-            except (TypeError, ValueError, IndexError):
+                item = q.pop(0)
+            except IndexError:
                 break
+            kb = None
+            if isinstance(item, dict):
+                kb = item.get('bpm')
+                item = item.get('s')
+            try:
+                ks = max(0.0, min(1.0, float(item)))
+            except (TypeError, ValueError):
+                break
+            if kb:
+                # BPM seed: disco's IOI-median tempo is steadier than any gap
+                # estimate here — take it directly; the EMA below remains the
+                # fallback for kicks without bpm (older client).
+                self.effect_params['iris_bpm_period'] = 60.0 / float(kb)
             lk = self.effect_params.get('iris_last_kick')
             if lk is not None:
                 dt_k = t - lk
@@ -831,12 +854,14 @@ class LichtwerkWebController:
         # ~160 BPM (or any onset burst) the dark phase hit zero and the strip
         # latched solid crimson. Stale (>1.6 s without kicks) → the tagged
         # 0.55 s free-run takes over: fallback IS the tag.
+        seed = self.effect_params.get('iris_bpm_period')
         ema = self.effect_params.get('iris_beat_ema')
         lk = self.effect_params.get('iris_last_kick')
-        if ema is not None and lk is not None and t - lk <= 1.6:
-            iris_period = max(0.30, min(1.20, ema))
+        if lk is not None and t - lk <= 1.6 and (seed or ema is not None):
+            iris_period = max(0.30, min(1.20, seed if seed else ema))
         else:
             iris_period = 0.55
+        self.effect_params['iris_period_eff'] = iris_period
         if snap and t >= 0.21:
             # u == 0 right now → rising edge ON the beat.
             self.effect_params['iris_ph'] = (t - 0.21) % iris_period
@@ -1016,9 +1041,9 @@ class LichtwerkWebController:
             # Frames the kernel refused. Non-zero means we are writing into an
             # in-flight DMA transfer — the pacing is off, not the paint.
             'dropped_frames': getattr(self.strip, 'dropped_frames', 0) if self.strip else 0,
-            'iris_beat_s': (round(self.effect_params['iris_beat_ema'], 3)
+            'iris_beat_s': (round(self.effect_params['iris_period_eff'], 3)
                             if self.current_effect == 'iris_warn'
-                            and self.effect_params.get('iris_beat_ema') else None),
+                            and self.effect_params.get('iris_period_eff') else None),
             'theater_rainbow': self.theater_rainbow,
             'led_count': self.strip.numPixels() if self.strip else 50,
             'pin': self.config['led_config']['pin']
@@ -1098,10 +1123,17 @@ def warn_kick_evt():
         strength = max(0.0, min(1.0, float(data.get('strength', 0.5))))
     except (TypeError, ValueError):
         strength = 0.5
+    bpm = None
+    try:
+        b = float(data.get('bpm'))
+        if 50.0 <= b <= 200.0:
+            bpm = b
+    except (TypeError, ValueError):
+        pass
     if controller.current_effect == 'iris_warn':
         q = controller.effect_params.setdefault('iris_kicks', [])
         if len(q) < 8:
-            q.append(strength)
+            q.append({'s': strength, 'bpm': bpm})
         controller.wake_effect()
     return jsonify({'status': 'ok'})
 

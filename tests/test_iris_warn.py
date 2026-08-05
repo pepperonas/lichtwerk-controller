@@ -304,3 +304,30 @@ def test_idle_reclear_heals_stuck_pixels():
     blk = blk[:blk.index("effects = {")]
     assert "_last_clear_ts" in blk
     assert "> 2.0" in blk
+
+
+# ---- Optimisation pass (2026-08-06): BPM seed + ordered shutdown ------------
+
+def test_bpm_seed_beats_the_gap_estimate():
+    """disco's IOI-median BPM rides in the kick POST; the strip takes it
+    directly instead of re-estimating tempo from inter-kick gaps (the EMA
+    needed 4-8 kicks after a track change). EMA stays as the fallback for
+    kicks without bpm — old clients keep working."""
+    src = _src()
+    assert "60.0 / float(kb)" in src
+    assert "seed if seed else ema" in src
+    assert "50.0 <= b <= 200.0" in src, "implausible bpm must not seed the period"
+    assert "iris_beat_ema" in src, "the EMA fallback must survive"
+
+
+def test_shutdown_joins_the_painter_before_the_final_clear():
+    """A frame past the `running` check can paint AFTER an early clear: the
+    strip then sits lit with nobody left to blank it until the next service
+    start. The handler must stop the painter first and finish with the PROVEN
+    double-clear (force=True) — the last frames on the wire are black."""
+    src = _src()
+    h = src[src.index("def signal_handler(self, sig, frame):"):]
+    h = h[:h.index("sys.exit(0)")]
+    assert "self.effect_thread.join" in h
+    assert "self.clear(force=True)" in h
+    assert h.index("join") < h.index("clear(force=True)"), "join must come first"
