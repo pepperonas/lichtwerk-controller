@@ -187,3 +187,74 @@ def test_write_failure_is_counted_not_raised(tmp_path, monkeypatch):
     s.show()
     assert s.dropped_frames == 1
 
+
+
+# ---- MultiStrip: second chain, mirrored ("analog") — 2026-08-06 -------------
+
+def test_multistrip_mirrors_one_render_to_all_devices():
+    """One buffer, one render, N writes: both chains must receive the byte-
+    identical payload — the mirror is by construction, not by re-drawing."""
+    from pio_strip import MultiStrip, Color
+
+    class Fake:
+        def __init__(self):
+            self._buf = bytearray(8); self._brightness = 255
+            self.payloads = []; self.dropped_frames = 0
+        def numPixels(self): return 2
+        def setPixelColor(self, n, c):
+            self._buf[n*4:n*4+3] = bytes([(c>>16)&255, (c>>8)&255, c&255])
+        def show_payload(self, payload, gain=255):
+            self.payloads.append(bytes(payload)); return True
+
+    a, b = Fake(), Fake()
+    m = MultiStrip([a, b])
+    m.setPixelColor(0, Color(255, 70, 55))
+    assert m.show() is True
+    assert a.payloads == b.payloads and len(a.payloads) == 1
+
+
+def test_multistrip_show_is_false_if_any_chain_dropped():
+    """Proven-clear contract: one chain silently keeping an image the other
+    lost is exactly the standstill-artifact bug at fleet scale. Any drop makes
+    the group show() False so clear() retries until EVERY chain is black."""
+    from pio_strip import MultiStrip
+
+    class Fake:
+        def __init__(self, ok):
+            self._buf = bytearray(4); self._brightness = 255
+            self.ok = ok; self.dropped_frames = 0
+        def show_payload(self, payload, gain=255):
+            if not self.ok: self.dropped_frames += 1; return False
+            return True
+
+    m = MultiStrip([Fake(True), Fake(False)])
+    assert m.show() is False
+    assert m.dropped_frames == 1
+
+
+def test_missing_second_device_never_costs_the_first():
+    """A /dev/ledsN that is absent (overlay off, chain unplugged, boot
+    conflict) must be SKIPPED — single-chain behaviour is the fallback."""
+    src = (_ROOT / "web_controller.py").read_text()
+    assert "if not os.path.exists(dev):" in src
+    assert "uebersprungen" in src
+
+
+def test_pio_device_map_is_resolved_not_assumed():
+    """2026-08-06, the real face of the '05.08 colour shift': the kernel
+    numbers ws2812-pio devices by DT unit address (ascending GPIO), not by
+    overlay order. Enabling gpio=18 next to gpio=21 made GPIO 18 leds0 and
+    moved the EXISTING chain to leds1 — the service kept writing the wrong
+    pin. Device names must be resolved at runtime; config 'device' keys are
+    deliberately ignored."""
+    src = (_ROOT / "web_controller.py").read_text()
+    fn = src[src.index("def parse_pio_map"):src.index("def resolve_pio_device")]
+    ns = {}
+    exec(fn, ns)
+    swap = ("a ws2812-pio-rp1 x: Instantiated 600 LEDs on GPIO 18 as /dev/leds0\n"
+            "b ws2812-pio-rp1 y: Instantiated 600 LEDs on GPIO 21 as /dev/leds1")
+    assert ns["parse_pio_map"](swap) == {18: "/dev/leds0", 21: "/dev/leds1"}
+    single = "x ws2812: Instantiated 600 LEDs on GPIO 21 as /dev/leds0"
+    assert ns["parse_pio_map"](single) == {21: "/dev/leds0"}
+    assert "resolve_pio_device(pin, pins)" in src, "chains must resolve by pin"
+    assert "wird BEWUSST ignoriert" in src

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import os
 import threading
 import time
 import json
@@ -8,7 +9,7 @@ import sys
 from flask import Flask, render_template, request, jsonify
 from flask_cors import CORS
 try:
-    from pio_strip import PixelStrip, Color  # Pi 5: ws2812-pio /dev/leds0
+    from pio_strip import MultiStrip, PixelStrip, Color  # Pi 5: ws2812-pio /dev/leds0
 except ImportError:
     from rpi_ws281x import PixelStrip, Color
 import iris_wash
@@ -25,28 +26,90 @@ app = Flask(__name__)
 CORS(app)
 
 
+def parse_pio_map(dmesg_text):
+    """GPIO -> /dev/ledsN aus den Kernel-Meldungen des ws2812-pio-Treibers.
+
+    Der Kernel nummeriert die Devices nach DT-Unit-Adresse (aufsteigender
+    GPIO), NICHT nach Overlay-Reihenfolge in der config.txt. Beobachtet
+    2026-08-06: gpio=18 zusaetzlich zu gpio=21 machte GPIO 18 zu leds0 und
+    schob die BESTEHENDE Kette auf leds1 — der Dienst schrieb weiter auf
+    leds0, also auf den falschen Pin. Genau das war die "Farbverschiebung"
+    vom 05.08. Deshalb: nie Namen aus der Config glauben, immer aufloesen.
+    Bei mehreren Eintraegen pro GPIO (Re-Bind) gewinnt der letzte.
+    """
+    import re
+    m = {}
+    for g, d in re.findall(r"ws2812[^\n]*?GPIO (\d+) as (/dev/leds\d+)", dmesg_text):
+        m[int(g)] = d
+    return m
+
+
+def resolve_pio_device(pin, pins_sorted):
+    """Device fuer einen GPIO: dmesg-Wahrheit, sonst Rang in sortierter Pin-Liste."""
+    try:
+        import subprocess
+        out = subprocess.run(["dmesg"], capture_output=True, text=True, timeout=3).stdout
+        dev = parse_pio_map(out).get(int(pin))
+        if dev:
+            return dev
+    except Exception:
+        pass
+    # Fallback = dieselbe Ordnung, nach der der Kernel nummeriert.
+    return "/dev/leds%d" % sorted(pins_sorted).index(int(pin))
+
+
 class LichtwerkWebController:
     def __init__(self, config_file='config.json'):
         with open(config_file, 'r') as f:
             self.config = json.load(f)
         
         led_cfg = self.config['led_config']
-        self.strip = PixelStrip(
-            led_cfg['led_count'],
-            led_cfg['pin'],
-            led_cfg['led_freq_hz'],
-            led_cfg['led_dma'],
-            led_cfg['led_invert'],
-            led_cfg['led_brightness'],
-            led_cfg['led_channel']
-        )
-        
-        try:
-            self.strip.begin()
-        except RuntimeError as e:
-            print(f"Warning: LED strip initialization failed: {e}")
+        # Multi-Kette (2026-08-06): jede in config['strips'] gelistete Kette,
+        # deren Device existiert, spielt gespiegelt mit (MultiStrip: EIN
+        # Buffer, EIN Render, N Writes — der Versatz zwischen den Ketten ist
+        # Mikrosekunden, weil write() sofort zurueckkehrt und die 18 ms
+        # Shift-out in Hardware laufen). Fehlt ein /dev/ledsN (Overlay aus,
+        # Kette ab, Boot-Konflikt), wird GENAU DIESE Kette uebersprungen und
+        # alles andere laeuft wie bisher — eine fehlende zweite Kette darf
+        # nie die erste kosten.
+        chains = self.config.get('strips') or [{
+            'pin': led_cfg['pin'], 'led_count': led_cfg['led_count'],
+            'device': '/dev/leds0',
+        }]
+        working = []
+        pins = [int(c.get('pin', led_cfg['pin'])) for c in chains]
+        for c in chains:
+            pin = int(c.get('pin', led_cfg['pin']))
+            # config['device'] wird BEWUSST ignoriert: die leds-Nummern haengen
+            # von der Menge der Overlays ab (s. parse_pio_map) — nur der Pin
+            # ist stabil.
+            dev = resolve_pio_device(pin, pins)
+            if not os.path.exists(dev):
+                print(f"Kette GPIO {pin} ({dev}) nicht vorhanden — uebersprungen")
+                continue
+            st = PixelStrip(
+                c.get('led_count', led_cfg['led_count']),
+                pin,
+                led_cfg['led_freq_hz'],
+                led_cfg['led_dma'],
+                led_cfg['led_invert'],
+                led_cfg['led_brightness'],
+                led_cfg['led_channel'],
+                device=dev,
+            )
+            try:
+                st.begin()
+                working.append(st)
+                print(f"Kette aktiv: GPIO {pin} -> {dev}")
+            except RuntimeError as e:
+                print(f"Warning: LED strip init failed ({dev}): {e}")
+        if not working:
             print("Running in demo mode without hardware...")
             self.strip = None
+        elif len(working) == 1:
+            self.strip = working[0]
+        else:
+            self.strip = MultiStrip(working)
         
         # State variables
         self.running = True

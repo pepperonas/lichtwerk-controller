@@ -171,3 +171,79 @@ class PixelStrip:
     @property
     def dropped_frames(self) -> int:
         return self._dropped
+
+
+class MultiStrip:
+    """One logical strip fanned out to N identical PIO devices ("analog").
+
+    Mirror by construction: there is exactly ONE pixel buffer (the primary's —
+    every drawing call is delegated to it), and show() renders the payload once
+    and writes it to every device back-to-back. A write() returns in ~2 us
+    while the 18 ms shift-out runs in hardware, so the inter-device skew is
+    microseconds: visually simultaneous, no software timing to drift.
+
+    Delivery semantics follow the proven-clear contract: show() is False if ANY
+    device dropped its frame, so clear() keeps retrying until every chain is
+    really black — one chain must never silently keep an image the other lost.
+    dropped_frames sums across devices for the status endpoint.
+    """
+
+    def __init__(self, strips):
+        if not strips:
+            raise ValueError("MultiStrip needs at least one strip")
+        self._strips = list(strips)
+        self._p = self._strips[0]
+
+    # ---- drawing: one buffer, the primary's ----
+    def numPixels(self):
+        return self._p.numPixels()
+
+    def setPixelColor(self, n, color):
+        self._p.setPixelColor(n, color)
+
+    def fill(self, color):
+        self._p.fill(color)
+
+    def getPixelColor(self, n):
+        return self._p.getPixelColor(n)
+
+    # ---- lifecycle / settings: fan out ----
+    def begin(self):
+        for s in self._strips:
+            s.begin()
+
+    def close(self):
+        for s in self._strips:
+            s.close()
+
+    def setBrightness(self, brightness):
+        for s in self._strips:
+            s.setBrightness(brightness)
+
+    def getBrightness(self):
+        return self._p.getBrightness()
+
+    @property
+    def dropped_frames(self):
+        return sum(getattr(s, "dropped_frames", 0) or 0 for s in self._strips)
+
+    # ---- output ----
+    def show(self):
+        # Render once (brightness LUT folded in like PioStrip.show), write N x.
+        payload = bytes(self._p._buf)
+        scale = self._p._brightness
+        if scale < 255:
+            payload = payload.translate(self._p._brightness_lut(scale))
+        ok = True
+        for s in self._strips:
+            # show_payload applies gain only — brightness is already folded in.
+            if s.show_payload(payload, 255) is False:
+                ok = False
+        return ok
+
+    def show_payload(self, payload, gain=255):
+        ok = True
+        for s in self._strips:
+            if s.show_payload(payload, gain) is False:
+                ok = False
+        return ok
