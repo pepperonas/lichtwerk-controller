@@ -171,3 +171,47 @@ def test_readme_documents_iris_warn_and_pio():
     assert "iris_warn" in readme
     assert "pio_strip" in readme or "ws2812-pio" in readme
     assert "raspi5" in readme.lower() or "Pi 5" in readme
+
+
+# ---- Beat-synced extension (2026-08-05): kicks, phase snap, shockwaves ------
+
+def _src():
+    return (_ROOT / "web_controller.py").read_text()
+
+
+def test_kick_extension_falls_back_to_the_tagged_blitz():
+    """Without kicks every frame must equal perfekt-20260805: phase offset
+    rests at 0.0, period and duty are untouched, waves expire on their own."""
+    src = _src()
+    assert "self.effect_params['iris_ph'] = 0.0" in src
+    assert "iris_ph', 0.0" in src              # default keeps the free-run identity
+    assert "period = 0.55" in src
+    assert "u < 0.65" in src
+    assert "Fallback IS the tag" in src
+
+
+def test_warn_kick_endpoint_is_an_event_not_a_frame():
+    src = _src()
+    assert "@app.route('/api/warn_kick', methods=['POST'])" in src
+    assert "if len(q) < 8:" in src, "queue must shed bursts, not build a backlog"
+    assert "if controller.current_effect == 'iris_warn':" in src, \
+        "outside iris_warn the event must be a silent no-op"
+
+
+def test_phase_snaps_onto_the_beat():
+    # u == 0 at the kick instant → the ON edge lands ON the beat.
+    assert "(t - 0.21) % 0.55" in _src()
+
+
+def test_shockwave_replaces_toward_warm_white():
+    """Conservative current budget: the front REPLACE-blends crimson toward a
+    warm white — additive blending would stack current on top of full crimson,
+    and 600 LEDs of full white would be ~36 A."""
+    src = _src()
+    assert "255, 226, 214" in src, "front must stay warm white (red/white scheme)"
+    assert "(wr - br) * g" in src, "replace-blend, not addition"
+
+
+def test_spark_boost_never_drops_below_the_tagged_density():
+    # factor 1.0 + 0.6*boost: boost=0 → exactly the tagged shower.
+    assert "1.0 + 0.6 * boost" in _src()

@@ -734,6 +734,19 @@ class LichtwerkWebController:
           2) Sustain square flash @ body-transition period (.55s), ~65% duty
           3) On each ON edge: dense white LED sparks for ~55 ms
         Local ~60 fps — no HTTP frame spam from disco.
+
+        Beat-synced extension (2026-08-05, additive): disco pushes ONE tiny
+        POST per detected kick (/api/warn_kick {strength}) — events, not
+        frames. Each kick (a) snaps the square-wave phase so the ON edge lands
+        ON the beat, (b) launches a centre-out shockwave whose white-hot front
+        races to both ends (the 1D twin of the page's IGNIS Druckwelle;
+        replace-blend toward warm white, so peak current stays ≈ the tagged
+        blitz), and (c) re-arms the spark window with density ∝ strength.
+        WITHOUT kicks every frame is bit-identical to the tagged
+        perfekt-20260805 behaviour — the square free-runs at 0.55 s from the
+        last phase, waves expire, boost decays. Fallback IS the tag.
+        Club-lighting research behind the shape: motion/chase carries energy,
+        strobe accents belong ON musical hits, restraint preserves impact.
         """
         if not self.strip:
             return
@@ -746,7 +759,28 @@ class LichtwerkWebController:
             self.effect_params['iris_lit'] = None
             self.effect_params['iris_sparking'] = None
             self.effect_params['iris_spark_until'] = 0.0
+            self.effect_params['iris_ph'] = 0.0          # square-wave phase offset (kick sync)
+            self.effect_params['iris_waves'] = []        # [{'born': t, 's': strength}]
+            self.effect_params['iris_kick_boost'] = 0.0  # spark density ∝ last kick strength
+            self.effect_params['iris_next_paint'] = 0.0  # wave repaint pacing (~50 fps)
         t = _time.monotonic() - t0
+
+        # ── Kick intake (Flask thread appends plain floats; GIL-safe pops) ──
+        q = self.effect_params.get('iris_kicks')
+        while q:
+            try:
+                ks = max(0.0, min(1.0, float(q.pop(0))))
+            except (TypeError, ValueError, IndexError):
+                break
+            if t >= 0.21:
+                # Snap the phase: u == 0 right now → rising edge ON the beat.
+                self.effect_params['iris_ph'] = (t - 0.21) % 0.55
+            self.effect_params['iris_spark_until'] = t + 0.055
+            self.effect_params['iris_kick_boost'] = ks
+            waves = self.effect_params['iris_waves']
+            waves.append({'born': t, 's': ks})
+            if len(waves) > 3:
+                waves.pop(0)
 
         # CSS peak rgba(255,70,55) — full punch, flat strip (no radial soft)
         hr, hg, hb = 255, 70, 55
@@ -756,9 +790,10 @@ class LichtwerkWebController:
         if t < 0.21:
             lit = not (0.07 <= t < 0.13)
         else:
-            # Square wave keyed to body transition (.55s) — hard edges only
+            # Square wave keyed to body transition (.55s) — hard edges only.
+            # iris_ph rests at 0.0 → identical to the tagged free-run.
             period = 0.55
-            u = ((t - 0.21) / period) % 1.0
+            u = ((t - 0.21 - self.effect_params.get('iris_ph', 0.0)) / period) % 1.0
             lit = u < 0.65  # ~65% ON / 35% BLACK
 
         last = self.effect_params.get('iris_lit')
@@ -767,28 +802,78 @@ class LichtwerkWebController:
             self.effect_params['iris_spark_until'] = t + 0.055
         spark = bool(lit and t < float(self.effect_params.get('iris_spark_until') or 0))
         last_spark = self.effect_params.get('iris_sparking')
-        if last is lit and last_spark is spark:
+
+        # Live shockwaves force full repaints (paced ~50 fps ≈ the 18 ms
+        # shift-out floor); without waves the tagged edge-only rewrite stays.
+        waves = self.effect_params.get('iris_waves') or []
+        if waves:
+            now_m = _time.monotonic()
+            waves = [w for w in waves
+                     if (t - w['born']) * (520.0 + 780.0 * w['s']) < self.strip.numPixels() / 2 + 60]
+            self.effect_params['iris_waves'] = waves
+            if not waves and last is lit and last_spark is spark:
+                return
+            if waves and now_m < self.effect_params.get('iris_next_paint', 0.0) \
+                    and last is lit and last_spark is spark:
+                return
+            self.effect_params['iris_next_paint'] = now_m + 0.02
+        elif last is lit and last_spark is spark:
             return  # only rewrite on lit/spark edges
         self.effect_params['iris_lit'] = lit
         self.effect_params['iris_sparking'] = spark
 
-        if not lit:
+        scale = max(0.0, min(1.0, self.brightness / 255.0))
+        n = self.strip.numPixels()
+
+        if not lit and not waves:
             self.clear()
             return
 
-        scale = max(0.0, min(1.0, self.brightness / 255.0))
         c = Color(int(hr * scale), int(hg * scale), int(hb * scale))
-        n = self.strip.numPixels()
-        if hasattr(self.strip, 'fill'):
-            self.strip.fill(c)
+        dark = Color(0, 0, 0)
+        base = c if lit else dark
+        if hasattr(self.strip, 'fill') and not waves:
+            self.strip.fill(base)
         else:
             for i in range(n):
-                self.strip.setPixelColor(i, c)
+                self.strip.setPixelColor(i, base)
+
+        # ── Shockwaves: white-hot front racing centre → both ends ──
+        # Replace-blend toward warm white keeps per-LED current ≈ crimson+Δ;
+        # the front burns brightest young and cools as it travels.
+        if waves:
+            wr, wg, wb = 255, 226, 214   # warm white — red/white scheme, never blue-ish
+            centre = n / 2.0
+            half = centre
+            for w in waves:
+                age = t - w['born']
+                v = 520.0 + 780.0 * w['s']            # LED/s — harder kicks race faster
+                dist = age * v
+                width = 12.0 + 24.0 * w['s']
+                cool = max(0.0, 1.0 - (dist / max(1.0, half)) * 0.45)
+                lo = max(0, int(centre - dist - width * 3))
+                hi = min(n - 1, int(centre + dist + width * 3))
+                for i in range(lo, hi + 1):
+                    d = abs(abs(i - centre) - dist)
+                    if d > width * 3:
+                        continue
+                    g = cool * w['s'] * (2.718281828 ** (-(d * d) / (2.0 * width * width)))
+                    if g <= 0.02:
+                        continue
+                    br, bg_, bb = (hr, hg, hb) if lit else (0, 0, 0)
+                    self.strip.setPixelColor(i, Color(
+                        int((br + (wr - br) * g) * scale),
+                        int((bg_ + (wg - bg_) * g) * scale),
+                        int((bb + (wb - bb) * g) * scale)))
+
         if spark and n > 0:
             w = Color(int(255 * scale), int(255 * scale), int(255 * scale))
             # ~8% of strip (was ~12 LEDs); cap so crimson base stays visible
             k = min(n, min(80, max(24 if n >= 48 else 3, n // 12)))
             k = min(k, max(1, (n * 2) // 5))  # ≤40% white
+            # Kick strength scales the shower; the tagged density is the floor.
+            boost = float(self.effect_params.get('iris_kick_boost', 0.0) or 0.0)
+            k = min(max(1, int(k * (1.0 + 0.6 * boost))), max(1, (n * 2) // 5))
             rng = random.Random(int(t0 * 1000) ^ int(t * 200))
             for i in rng.sample(range(n), k):
                 self.strip.setPixelColor(i, w)
@@ -930,6 +1015,26 @@ def warn_gate():
         'effect': controller.current_effect,
         'strip_warn_mode': controller.strip_warn_mode,
     })
+
+
+@app.route('/api/warn_kick', methods=['POST'])
+def warn_kick_evt():
+    """Beat event from disco while Strip-Warn runs (~1-3 POSTs/s).
+
+    Events, not frames — the strip stays the renderer (era principle). Outside
+    iris_warn it is a silent no-op so the disco client can stay dumb; the queue
+    cap sheds bursts instead of building a backlog of stale beats."""
+    data = request.get_json() or {}
+    try:
+        strength = max(0.0, min(1.0, float(data.get('strength', 0.5))))
+    except (TypeError, ValueError):
+        strength = 0.5
+    if controller.current_effect == 'iris_warn':
+        q = controller.effect_params.setdefault('iris_kicks', [])
+        if len(q) < 8:
+            q.append(strength)
+        controller.wake_effect()
+    return jsonify({'status': 'ok'})
 
 
 @app.route('/api/warn_mode', methods=['POST'])
