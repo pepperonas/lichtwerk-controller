@@ -45,13 +45,21 @@ def parse_pio_map(dmesg_text):
 
 
 def resolve_pio_device(pin, pins_sorted):
-    """Device fuer einen GPIO: dmesg-Wahrheit, sonst Rang in sortierter Pin-Liste."""
+    """Device fuer einen GPIO: dmesg-Wahrheit, sonst Rang in sortierter Pin-Liste.
+
+    Kennt dmesg den Treiber, ist seine Karte VOLLSTAENDIG: ein Pin ohne
+    Eintrag hat KEIN Device (Overlay aus) und liefert None — Kette wird
+    uebersprungen. Der Rang-Fallback gilt nur, wenn dmesg gar nicht lesbar
+    ist. Vorher fiel ein overlay-loser Pin in den Fallback und landete auf
+    Rang 0 = dem Device der ERSTEN Kette: zwei Ketten auf einem Device,
+    jeder zweite Write EBUSY, und der bewiesene Clear konnte nie latchen.
+    """
     try:
         import subprocess
         out = subprocess.run(["dmesg"], capture_output=True, text=True, timeout=3).stdout
-        dev = parse_pio_map(out).get(int(pin))
-        if dev:
-            return dev
+        m = parse_pio_map(out)
+        if m:
+            return m.get(int(pin))
     except Exception:
         pass
     # Fallback = dieselbe Ordnung, nach der der Kernel nummeriert.
@@ -77,6 +85,7 @@ class LichtwerkWebController:
             'device': '/dev/leds0',
         }]
         working = []
+        belegt = set()
         pins = [int(c.get('pin', led_cfg['pin'])) for c in chains]
         for c in chains:
             pin = int(c.get('pin', led_cfg['pin']))
@@ -84,9 +93,13 @@ class LichtwerkWebController:
             # von der Menge der Overlays ab (s. parse_pio_map) — nur der Pin
             # ist stabil.
             dev = resolve_pio_device(pin, pins)
-            if not os.path.exists(dev):
+            if not dev or not os.path.exists(dev):
                 print(f"Kette GPIO {pin} ({dev}) nicht vorhanden — uebersprungen")
                 continue
+            if dev in belegt:
+                print(f"Kette GPIO {pin}: {dev} schon belegt — uebersprungen")
+                continue
+            belegt.add(dev)
             st = PixelStrip(
                 c.get('led_count', led_cfg['led_count']),
                 pin,

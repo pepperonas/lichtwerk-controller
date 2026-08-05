@@ -236,7 +236,7 @@ def test_missing_second_device_never_costs_the_first():
     """A /dev/ledsN that is absent (overlay off, chain unplugged, boot
     conflict) must be SKIPPED — single-chain behaviour is the fallback."""
     src = (_ROOT / "web_controller.py").read_text()
-    assert "if not os.path.exists(dev):" in src
+    assert "if not dev or not os.path.exists(dev):" in src
     assert "uebersprungen" in src
 
 
@@ -258,3 +258,16 @@ def test_pio_device_map_is_resolved_not_assumed():
     assert ns["parse_pio_map"](single) == {21: "/dev/leds0"}
     assert "resolve_pio_device(pin, pins)" in src, "chains must resolve by pin"
     assert "wird BEWUSST ignoriert" in src
+
+
+def test_pin_without_overlay_is_skipped_not_misassigned():
+    """When dmesg knows the driver, its map is COMPLETE: a pin without an
+    entry has no device and must yield None (chain skipped). The rank
+    fallback previously caught it and handed it rank 0 = the FIRST chain's
+    device: two chains on one fd, every second write EBUSY, and the proven
+    clear could never latch. The build loop also dedupes devices outright."""
+    src = (_ROOT / "web_controller.py").read_text()
+    body = src[src.index("def resolve_pio_device"):src.index("class LichtwerkWebController")]
+    assert "if m:\n            return m.get(int(pin))" in body or "return m.get(int(pin))" in body
+    assert "if dev in belegt:" in src
+    assert "if not dev or not os.path.exists(dev):" in src
