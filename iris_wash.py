@@ -188,41 +188,109 @@ def led_rgb(i: int, n: int, e: float, exposure: float = DEFAULT_EXPOSURE,
     return tuple(out)
 
 
+def strip_totals(n: int, e: float, exposure: float = DEFAULT_EXPOSURE):
+    """(draw in A, mean channel byte) for the wash — one pass, both numbers.
+
+    The overlays need the mean channel to know how much headroom to white they
+    have to cover, and the budget needs the draw. Computing them together halves
+    the work, which matters because the cap solver evaluates this repeatedly.
+    """
+    if n <= 0:
+        return 0.0, 0.0
+    total = 0
+    for i in range(n):
+        total += sum(led_rgb(i, n, e, exposure))
+    draw = total / 255.0 * MA_PER_CHANNEL + n * MA_IDLE_PER_LED
+    return draw, total / (3.0 * n)
+
+
+def overlay_current_a(n: int, exposure: float = DEFAULT_EXPOSURE,
+                      sparks: bool = True, shimmer: bool = True,
+                      base: float | None = None) -> float:
+    """Extra draw the white layers add on top of the wash at this exposure.
+
+    Counter-intuitive and exactly why this has to be inside the budget: the
+    overlay draw *rises* as the exposure falls. Highlights blend toward a fixed
+    white point, so a darker base leaves *more* headroom for them to cover.
+    Scaling the wash down to fit a supply therefore makes the overlays more
+    expensive, and a cap that ignores them drifts further off the tighter it is
+    set — the one situation where you actually needed it to hold.
+    """
+    if n <= 0:
+        return 0.0
+    if base is None:
+        base = strip_totals(n, 1.0, exposure)[1]
+    out = 0.0
+    if sparks:
+        out += spark_current_a(base=base)
+    if shimmer:
+        out += shimmer_current_a(base=base)
+    return out
+
+
+def total_current_a(n: int, exposure: float = DEFAULT_EXPOSURE,
+                    sparks: bool = True, shimmer: bool = True,
+                    e: float = 1.0) -> float:
+    """Worst-case 5 V draw of everything the strip paints at once."""
+    draw, base = strip_totals(n, e, exposure)
+    return draw + overlay_current_a(n, exposure, sparks, shimmer, base=base)
+
+
 def fit_exposure(n: int, max_current_a: float,
-                 exposure: float = DEFAULT_EXPOSURE) -> float:
-    """Largest exposure ≤ `exposure` whose breathe peak stays within a budget.
+                 exposure: float = DEFAULT_EXPOSURE,
+                 sparks: bool = True, shimmer: bool = True) -> float:
+    """Largest exposure ≤ `exposure` whose *total* peak stays within a budget.
 
     A 600 LED red wash pulls double-digit amps; if the supply cannot deliver it
     the strip browns out, the far end shifts colour, and the whole point of the
     warning is lost. Scaling the exposure keeps hue and breathe dynamics intact
     and only trades away brightness.
+
+    Solved numerically rather than by the closed-form ratio the wash alone
+    allowed: with the overlays in the budget the total is no longer proportional
+    to the exposure — one term climbs with it while the other falls — so there
+    is nothing to divide. Bisection is exact enough and runs once, at arm time.
+
+    Returns 0.0 when even a black wash plus the overlays exceeds the budget.
+    That is a real answer, not a failure: it means the supply cannot carry the
+    highlights at all and the caller must switch them off rather than paint a
+    dim wash that still busts the limit.
     """
     if not max_current_a or max_current_a <= 0:
         return exposure
-    idle = n * MA_IDLE_PER_LED
-    budget = max_current_a - idle
-    if budget <= 0:
-        return 0.0
-    peak = estimate_current_a(n, 1.0, exposure) - idle
-    if peak <= budget or peak <= 0:
+    if total_current_a(n, exposure, sparks, shimmer) <= max_current_a:
         return exposure
-    return exposure * (budget / peak)
+    if total_current_a(n, 0.0, sparks, shimmer) > max_current_a:
+        return 0.0
+    lo, hi = 0.0, exposure
+    for _ in range(32):
+        mid = 0.5 * (lo + hi)
+        if total_current_a(n, mid, sparks, shimmer) <= max_current_a:
+            lo = mid
+        else:
+            hi = mid
+    return lo
 
 
 def build_frames(n: int, steps: int = DEFAULT_STEPS,
                  exposure: float = DEFAULT_EXPOSURE,
-                 max_current_a: float | None = None):
+                 max_current_a: float | None = None,
+                 sparks: bool = True, shimmer: bool = True):
     """Precompute the breathe ramp as ready-to-write RGBW payloads.
 
     Only the 0 → 1 ramp is stored; `alternate` replays it backwards, so
     `frame_index()` walks it as a triangle. 64 steps × 600 LEDs × 4 bytes is
     ~154 KB, and it collapses the per-frame cost to an index plus a write.
+
+    `sparks`/`shimmer` do not change a pixel here — the overlays are painted
+    live. They are budget inputs: with a cap set, the wash has to leave room for
+    whatever the highlights will add on top of it.
     """
     n = max(0, int(n))
     steps = max(2, int(steps))
     white = WHITE_PEAK
     if max_current_a:
-        fitted = fit_exposure(n, max_current_a, exposure)
+        fitted = fit_exposure(n, max_current_a, exposure, sparks, shimmer)
         # Scale the white floor by the same factor, or capping the exposure would
         # leave an additive term untouched and quietly bust the budget it set.
         if exposure > 0:
@@ -312,6 +380,137 @@ def spark_rate(e: float) -> float:
     """Spawns per second at breathe phase e — busier as the wash swells."""
     e = max(0.0, min(1.0, e))
     return SPARK_RATE_IDLE + (SPARK_RATE_PEAK - SPARK_RATE_IDLE) * e
+
+
+# ---- audio-reactive spawning ----------------------------------------------
+# "Random" and "on the music" only look like opposites. The spawner is already a
+# Poisson process — `expected = rate * dt` feeds a coin flip per frame, so `rate`
+# is a probability *density*, never a trigger. Swapping what drives that density
+# therefore leaves the randomness completely intact: a kick raises the density,
+# so it lands as a burst, but which LEDs and exactly when inside the burst stay
+# chance. Two identical kicks never draw the same picture. Trigger the sparks off
+# the beat instead and you get a metronome, which is the thing to avoid.
+
+PULSE_ATTACK_S = 0.015      # envelope rise — fast enough to sit on the transient
+PULSE_RELEASE_S = 0.25      # envelope fall — a hit decays like a splash, not a cut
+PULSE_ONSET_WEIGHT = 0.65   # share of the drive taken from the transient
+PULSE_ONSET_SPAN = 2.0      # onset_strength above baseline that maps to full drive
+PULSE_STALE_S = 1.5         # feed older than this → fall back to the breathe
+
+SPARK_RATE_BASS = 26.0      # spawns/s added at full drive, on top of the breathe
+SPARK_JITTER_S = 0.08       # random birth delay — smears a burst across frames
+SPARK_LIFE_SPREAD = 0.45    # ± fraction of SPARK_LIFE_S drawn per spark
+
+
+def envelope_follow(prev: float, target: float, dt: float,
+                    attack_s: float = PULSE_ATTACK_S,
+                    release_s: float = PULSE_RELEASE_S) -> float:
+    """One-pole follower with separate rise and fall constants.
+
+    The raw bass meter follows the waveform, and driving the spawn rate straight
+    off it makes the sparks stutter at the note rate. Asymmetric smoothing fixes
+    both ends: the fast attack keeps the burst on the transient where the ear
+    expects it, the slow release lets it decay instead of snapping off — which is
+    the difference between a splash and a strobe.
+    """
+    if dt <= 0.0:
+        return prev
+    tau = attack_s if target > prev else release_s
+    if tau <= 0.0:
+        return target
+    return prev + (target - prev) * (1.0 - math.exp(-dt / tau))
+
+
+def pulse_drive(level: float, onset: float,
+                weight: float = PULSE_ONSET_WEIGHT,
+                span: float = PULSE_ONSET_SPAN) -> float:
+    """Fold disco's bass meter and onset salience into one 0..1 drive.
+
+    Level alone is the wrong signal: a sustained sub-bass drone would hold the
+    meter high and turn the sparks into a firehose that says nothing about the
+    music. `onset_strength` is disco's energy/baseline ratio — it sits near 1.0
+    at rest and spikes on a transient, so it carries the *events*. Weighting
+    toward it gives a drone a low simmer and a kick a burst, which is what the
+    ear actually tracks.
+    """
+    tr = max(0.0, min(1.0, (onset - 1.0) / span)) if span > 0 else 0.0
+    lv = max(0.0, min(1.0, level))
+    w = max(0.0, min(1.0, weight))
+    return max(0.0, min(1.0, (1.0 - w) * lv + w * tr))
+
+
+def spark_rate_audio(e: float, drive: float,
+                     bass_rate: float = SPARK_RATE_BASS) -> float:
+    """Spawn density: the breathe floor plus a bass-driven surge.
+
+    The breathe term stays in so the warning still lives when nothing is playing
+    — a silent room must not mean a dead strip, since the wash is a warning
+    first and a visualiser second.
+    """
+    return spark_rate(e) + bass_rate * max(0.0, min(1.0, drive))
+
+
+def spark_birth_age(u: float, jitter_s: float = SPARK_JITTER_S) -> float:
+    """Negative starting age = a spark that blooms `u * jitter` seconds late.
+
+    Even as a probability density, a loud enough kick fires so reliably on every
+    beat that the eye re-reads it as synchronised. Scattering the birth times
+    across ~80 ms smears the burst over two or three frames, so it arrives as a
+    spatter rather than one simultaneous flash. Costs nothing: `spark_envelope`
+    already returns 0 for a non-positive age, so an unborn spark simply paints
+    nothing until its time comes.
+    """
+    return -max(0.0, min(1.0, u)) * max(0.0, jitter_s)
+
+
+def spark_life(drive: float, u: float, life_s: float = SPARK_LIFE_S,
+               spread: float = SPARK_LIFE_SPREAD) -> float:
+    """Per-spark lifetime: longer on a harder hit, with spread on top.
+
+    Dynamics have to come from somewhere other than the count, because the count
+    is bounded by the power budget (`SPARK_MAX`) — a hard kick that only spawns
+    "more" hits that ceiling and then stops reading as harder. Varying lifetime
+    is free: it changes how long each highlight lingers, not how many are lit.
+    """
+    d = max(0.0, min(1.0, drive))
+    u = max(0.0, min(1.0, u))
+    scale = (1.0 - spread) + spread * (0.5 * d + u * (0.5 + 0.5 * d))
+    return max(1e-3, life_s * scale)
+
+
+def spawn_sparks(alive, rate: float, dt: float, n: int, drive: float, rng,
+                 max_count: int = SPARK_MAX,
+                 jitter_s: float = 0.0, life_spread: float = 0.0):
+    """Advance and repopulate the spark list. Pure, so the process is testable.
+
+    `alive` is a list of (centre, age, life). Ages advance by `dt`; anything past
+    its life is dropped. New sparks arrive as a Poisson process at `rate` — the
+    per-frame coin flip is what keeps the pattern unpredictable while the music
+    sets how often it comes up heads.
+
+    The cap is a power limit, not an aesthetic one: every concurrent spark is
+    extra draw on top of a wash that already peaks in the double digits.
+
+    `jitter_s` and `life_spread` default to **off**, which reproduces the fixed
+    0.7 s bloom exactly. They exist for the bass-driven path: scattering birth
+    times keeps a loud kick from reading as one synchronised flash, and varying
+    lifetime carries hit strength without spending more of the power budget.
+    Left on with nothing driving them they are not neutral — they shorten every
+    spark to ~0.4-0.5 s, which turns a bloom into a blink. Dynamics without a
+    signal to be dynamic about is just noise.
+    """
+    dt = max(0.0, dt)
+    out = [(c, a + dt, life) for c, a, life in alive if a + dt < life]
+    if n <= 0 or rate <= 0.0 or dt <= 0.0:
+        return out
+    expected = rate * dt
+    while expected > 0.0 and len(out) < max_count:
+        if rng.random() < min(1.0, expected):
+            out.append((rng.randrange(n),
+                        spark_birth_age(rng.random(), jitter_s),
+                        spark_life(drive, rng.random(), spread=life_spread)))
+        expected -= 1.0
+    return out
 
 
 # ---- travelling shimmer ----------------------------------------------------

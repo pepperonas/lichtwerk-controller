@@ -8,9 +8,10 @@ import sys
 from flask import Flask, render_template, request, jsonify
 from flask_cors import CORS
 try:
-    from pio_strip import PixelStrip, Color  # Pi 5: ws2812-pio /dev/leds0
+    from pio_strip import PixelStrip, Color, StripGroup  # Pi 5: ws2812-pio /dev/leds<n>
 except ImportError:
     from rpi_ws281x import PixelStrip, Color
+    StripGroup = None  # legacy DMA driver drives a single chain only
 import iris_wash
 import math
 import random
@@ -31,22 +32,50 @@ class LichtwerkWebController:
             self.config = json.load(f)
         
         led_cfg = self.config['led_config']
-        self.strip = PixelStrip(
-            led_cfg['led_count'],
-            led_cfg['pin'],
-            led_cfg['led_freq_hz'],
-            led_cfg['led_dma'],
-            led_cfg['led_invert'],
-            led_cfg['led_brightness'],
-            led_cfg['led_channel']
-        )
-        
-        try:
-            self.strip.begin()
-        except RuntimeError as e:
-            print(f"Warning: LED strip initialization failed: {e}")
+        # One chain or several. `strips` is a list of overrides on top of
+        # led_cfg; absent, the single legacy chain is used unchanged, so an old
+        # config.json keeps working byte for byte.
+        chain_cfgs = self.config.get('strips') or [{}]
+        chains = []
+        for idx, override in enumerate(chain_cfgs):
+            cfg = dict(led_cfg)
+            cfg.update(override)
+            chains.append(PixelStrip(
+                cfg['led_count'],
+                cfg['pin'],
+                cfg['led_freq_hz'],
+                cfg['led_dma'],
+                cfg['led_invert'],
+                cfg['led_brightness'],
+                cfg['led_channel'],
+                device=cfg.get('device', f'/dev/leds{idx}'),
+            ))
+
+        # Bring chains up one at a time. A missing /dev/leds<n> must not cost the
+        # chains that *are* wired — losing the second run should dim the room,
+        # not take the warning light with it.
+        live = []
+        for chain in chains:
+            try:
+                chain.begin()
+                live.append(chain)
+            except RuntimeError as e:
+                print(f"Warning: LED chain {chain._device} unavailable: {e}")
+        if not live:
             print("Running in demo mode without hardware...")
             self.strip = None
+        elif len(live) == 1 and len(chains) == 1:
+            self.strip = live[0]
+        elif StripGroup is None:
+            # rpi_ws281x path: one DMA channel, one chain. Say so rather than
+            # silently lighting a third of what the config asked for.
+            print(f"Warning: legacy driver drives one chain — "
+                  f"ignoring {len(live) - 1} configured chain(s)")
+            self.strip = live[0]
+        else:
+            self.strip = StripGroup(live)
+            print(f"LED chains: {len(live)}/{len(chains)} live, "
+                  f"lengths {self.strip.lengths} = {self.strip.numPixels()} px")
         
         # State variables
         self.running = True
@@ -69,8 +98,13 @@ class LichtwerkWebController:
         self._wash_steps = max(2, int(wash_cfg.get('steps', iris_wash.DEFAULT_STEPS)))
         self._wash_exposure = float(wash_cfg.get('exposure', iris_wash.DEFAULT_EXPOSURE))
         self._wash_max_current_a = wash_cfg.get('max_current_a') or None
-        self._wash_cache = ()
-        self._wash_n = 0
+        # 'mirror' paints the whole wash onto every chain, 'extend' spreads one
+        # wash across all of them. Mirror is the default because the wash is a
+        # warning: a run in another corner has to show the signal, not the tail
+        # end of someone else's gradient.
+        self._wash_mode = str(wash_cfg.get('mode', 'mirror')).lower()
+        self._wash_cache = ()          # one frame tuple per painted segment
+        self._wash_key = None          # segment lengths the cache was built for
         self._wash_t0 = None           # breathe origin; None while idle
         self._wash_fade_t0 = None      # release ramp origin; None when not fading
         self._wash_fade_from = 0       # frame the fade started from
@@ -80,7 +114,10 @@ class LichtwerkWebController:
         self._wash_white_point = tuple(max(0, min(255, int(v))) for v in wp)
         self._wash_sparks_on = bool(wash_cfg.get('sparks', True))
         self._wash_shimmer_on = bool(wash_cfg.get('shimmer', True))
-        self._wash_sparks = []         # [(centre_led, age_s), ...]
+        # One spark list per painted segment. Chains share the wash underneath
+        # but never the specks: identical highlight positions on every run read
+        # as a machine rather than as weather.
+        self._wash_sparks = []         # [[(centre, age_s, life_s), ...], ...]
         self._wash_spark_ts = None
         self._wash_kernel = iris_wash.spark_kernel()
         
@@ -634,24 +671,60 @@ class LichtwerkWebController:
         self.effect_params['breathe_direction'] = direction
     
 
-    def _wash_frames(self):
-        """Precomputed breathe ramp — rebuilt only when the LED count changes."""
-        n = self.strip.numPixels() if self.strip else 0
-        if n <= 0:
+    def _wash_segments(self):
+        """Pixel counts the wash renders for.
+
+        Mirroring gives one frame per chain, extending one frame spanning the
+        lot. A single chain collapses to the same thing either way, which is why
+        the rest of the wash code needs no special case for it.
+        """
+        if not self.strip:
             return ()
-        if self._wash_n != n or not self._wash_cache:
-            self._wash_cache = iris_wash.build_frames(
-                n, self._wash_steps, self._wash_exposure, self._wash_max_current_a)
-            self._wash_n = n
-            exposure = (iris_wash.fit_exposure(n, self._wash_max_current_a, self._wash_exposure)
+        lengths = getattr(self.strip, 'lengths', None)
+        if not lengths or self._wash_mode == 'extend':
+            return (self.strip.numPixels(),)
+        return tuple(lengths)
+
+    def _wash_frames(self):
+        """Precomputed breathe ramp per segment — rebuilt when the shape changes."""
+        segs = self._wash_segments()
+        if not segs or sum(segs) <= 0:
+            return ()
+        if self._wash_key != segs or not self._wash_cache:
+            sparks_on, shimmer_on = self._wash_sparks_on, self._wash_shimmer_on
+            # Build once per *distinct* length. Two 600 LED chains are the normal
+            # case and share a ramp, so mirroring costs no extra ~390 ms arm time
+            # and no second 150 KB — the frames are read-only.
+            by_len = {}
+            for n in sorted(set(segs)):
+                by_len[n] = iris_wash.build_frames(
+                    n, self._wash_steps, self._wash_exposure,
+                    self._wash_max_current_a, sparks_on, shimmer_on)
+            self._wash_cache = tuple(by_len[n] for n in segs)
+            self._wash_key = segs
+            self._wash_sparks = [[] for _ in segs]
+            n = segs[0]
+            exposure = (iris_wash.fit_exposure(n, self._wash_max_current_a,
+                                               self._wash_exposure, sparks_on, shimmer_on)
                         if self._wash_max_current_a else self._wash_exposure)
-            peak = iris_wash.estimate_current_a(n, 1.0, exposure)
-            spark = iris_wash.spark_current_a() if self._wash_sparks_on else 0.0
-            shim = iris_wash.shimmer_current_a() if self._wash_shimmer_on else 0.0
-            print(f"iris wash: {len(self._wash_cache)} frames x {n} LEDs, "
-                  f"exposure {exposure:.2f}, peak ~{peak:.1f} A"
+            peak, base = iris_wash.strip_totals(n, 1.0, exposure)
+            spark = iris_wash.spark_current_a(base=base) if sparks_on else 0.0
+            shim = iris_wash.shimmer_current_a(base=base) if shimmer_on else 0.0
+            per = peak + spark + shim
+            print(f"iris wash [{self._wash_mode}]: {len(self._wash_cache[0])} frames, "
+                  f"segments {segs}, exposure {exposure:.2f}, peak ~{peak:.1f} A"
                   f" (+{spark:.1f} sparks +{shim:.1f} shimmer)"
-                  f" = worst case ~{peak + spark + shim:.1f} A")
+                  f" = worst case ~{per:.1f} A per chain"
+                  + (f", ~{per * len(segs):.1f} A total" if len(segs) > 1 else "")
+                  + (f" [cap {self._wash_max_current_a:.1f} A]"
+                     if self._wash_max_current_a else ""))
+            if self._wash_max_current_a and exposure <= 0.0:
+                # The solver ran out of room before the wash got any brightness:
+                # the highlights alone do not fit. Say so — silently painting
+                # black would look like a broken effect rather than a budget.
+                print(f"iris wash: WARNING cap {self._wash_max_current_a:.1f} A is below "
+                      f"the overlays alone (~{spark + shim:.1f} A) — "
+                      f"turn off sparks/shimmer or raise the cap")
         return self._wash_cache
 
     def _wash_engage(self):
@@ -663,9 +736,12 @@ class LichtwerkWebController:
         """
         self._wash_t0 = time.monotonic() - iris_wash.BREATHE_PERIOD_S
         self._wash_fade_t0 = None
-        self._wash_sparks = []
         self._wash_spark_ts = None
-        self._wash_frames()
+        frames = self._wash_frames()
+        # After the build, not before: a warm cache skips the rebuild that would
+        # otherwise have sized this list, and an empty one would then index out
+        # of range on the first painted frame.
+        self._wash_sparks = [[] for _ in frames]
 
     def _wash_release(self):
         """Back under threshold — fade out like the page's .55 s transition."""
@@ -708,10 +784,26 @@ class LichtwerkWebController:
                                          payload[j + 2] * gain // 255))
         strip.show()
 
+    def _show_wash(self, payloads, gain=255):
+        """Write one payload per segment.
+
+        A single payload means one picture across everything — either one chain,
+        or several in `extend` mode. Several payloads mean one per chain, which
+        is mirroring.
+        """
+        strip = self.strip
+        if strip is None or not payloads:
+            return
+        if len(payloads) == 1:
+            self._show_payload(payloads[0], gain)
+            return
+        gain = max(0, min(255, gain * max(0, min(255, self.brightness)) // 255))
+        strip.show_mirrored(payloads, gain)
+
     def _paint_wash_fade(self):
         """Drive the release ramp. Runs with power=False so it can finish."""
-        frames = self._wash_frames()
-        if not frames or self._wash_fade_t0 is None:
+        segments = self._wash_frames()
+        if not segments or self._wash_fade_t0 is None:
             self._wash_fade_t0 = None
             return
         gain = iris_wash.release_gain(time.monotonic() - self._wash_fade_t0)
@@ -720,7 +812,8 @@ class LichtwerkWebController:
             self.clear(force=True)
             return
         with self._strip_lock:
-            self._show_payload(frames[min(self._wash_fade_from, len(frames) - 1)], gain)
+            self._show_wash([f[min(self._wash_fade_from, len(f) - 1)] for f in segments],
+                            gain)
         self._cleared = False
 
     def effect_iris_warn(self):
@@ -743,24 +836,35 @@ class LichtwerkWebController:
                 self._iris_abort()
             return
 
-        frames = self._wash_frames()
-        if not frames:
+        segments = self._wash_frames()
+        if not segments:
             return
         if self._wash_t0 is None:
             self._wash_engage()
+            segments = self._wash_cache
         now = time.monotonic()
-        idx = iris_wash.frame_index(now - self._wash_t0, len(frames))
-        payload = frames[idx]
-        if self._wash_sparks_on or self._wash_shimmer_on:
-            payload = self._paint_overlay(payload, idx, len(frames), now)
+        steps = len(segments[0])
+        # One phase for all chains: they breathe together. Only the highlights
+        # are drawn independently — a shared rhythm with private detail is what
+        # makes two runs read as one room rather than two installations.
+        idx = iris_wash.frame_index(now - self._wash_t0, steps)
+        dt = now - (self._wash_spark_ts if self._wash_spark_ts is not None else now)
+        self._wash_spark_ts = now
+        overlays = self._wash_sparks_on or self._wash_shimmer_on
+        payloads = []
+        for seg, frames in enumerate(segments):
+            payload = frames[idx]
+            if overlays:
+                payload = self._paint_overlay(payload, idx, steps, now, seg, dt)
+            payloads.append(payload)
         with self._strip_lock:
             # Re-check under the lock so a concurrent release is not overpainted
             if not self.power or not self.strip_warn_over:
                 return
-            self._show_payload(payload)
+            self._show_wash(payloads)
         self._cleared = False
 
-    def _paint_overlay(self, base, idx, steps, now):
+    def _paint_overlay(self, base, idx, steps, now, seg=0, dt=0.0):
         """Lay the white layers over the precomputed wash frame.
 
         Two of them, doing different jobs: a travelling shimmer you can follow
@@ -769,9 +873,10 @@ class LichtwerkWebController:
         base with a few hundred bytes rewritten. Added additively because the
         payload is already in linear PWM space, which is where light sums.
         """
-        dt = now - (self._wash_spark_ts if self._wash_spark_ts is not None else now)
-        self._wash_spark_ts = now
-        n = self.strip.numPixels() if self.strip else 0
+        # The segment's own length, not the group total: a mirrored frame covers
+        # one chain, and spawning across 1200 would put half the sparks past the
+        # end of the buffer they are painted into.
+        n = len(base) // 4
         if n <= 0:
             return base
 
@@ -779,14 +884,12 @@ class LichtwerkWebController:
 
         alive = []
         if self._wash_sparks_on:
-            alive = [(c, a + dt) for c, a in self._wash_sparks
-                     if a + dt < iris_wash.SPARK_LIFE_S]
-            expected = iris_wash.spark_rate(e) * dt
-            while expected > 0.0 and len(alive) < iris_wash.SPARK_MAX:
-                if random.random() < min(1.0, expected):
-                    alive.append((random.randrange(n), 0.0))
-                expected -= 1.0
-            self._wash_sparks = alive
+            while len(self._wash_sparks) <= seg:
+                self._wash_sparks.append([])
+            alive = iris_wash.spawn_sparks(
+                self._wash_sparks[seg], iris_wash.spark_rate(e), dt, n,
+                drive=0.0, rng=random)
+            self._wash_sparks[seg] = alive
 
         if not alive and not self._wash_shimmer_on:
             return base
@@ -817,6 +920,12 @@ class LichtwerkWebController:
         # Shimmer first: sparks should still read as the brighter accent on top.
         if self._wash_shimmer_on:
             elapsed = now - (self._wash_t0 if self._wash_t0 is not None else now)
+            # Stagger the sweeps between chains by half a band spacing. Mirrored
+            # chains share the wash on purpose, but bands marching in lockstep
+            # across two runs look mechanical in a way one run never does.
+            if seg:
+                span = float(n) / max(1, iris_wash.SHIMMER_COUNT)
+                elapsed += seg * 0.5 * span / iris_wash.SHIMMER_SPEED
             w = iris_wash.SHIMMER_WIDTH
             for k in range(iris_wash.SHIMMER_COUNT):
                 centre = iris_wash.shimmer_centre(elapsed, n, k)
@@ -827,8 +936,8 @@ class LichtwerkWebController:
 
         kernel = self._wash_kernel
         sw = iris_wash.SPARK_WIDTH
-        for centre, age in alive:
-            env = iris_wash.spark_envelope(age)
+        for centre, age, life in alive:
+            env = iris_wash.spark_envelope(age, life)
             if env <= 0.0:
                 continue
             amp = env * iris_wash.SPARK_MIX
@@ -867,6 +976,15 @@ class LichtwerkWebController:
         }
         
         if self.current_effect in effects:
+            # What is actually on the chain, logged on change only. Reading the
+            # HTTP log tells you what was *asked* for; this tells you what got
+            # painted, which is the question when the strip shows something
+            # nobody admits to sending.
+            state = (self.current_effect, self.power, self.strip_warn_mode)
+            if state != getattr(self, '_painted_state', None):
+                self._painted_state = state
+                print(f"paint: effect={state[0]} power={state[1]} "
+                      f"warn_mode={state[2]} over={self.strip_warn_over}")
             effects[self.current_effect]()
             # Non-iris effects always leave the strip potentially lit
             if self.current_effect != 'iris_warn':

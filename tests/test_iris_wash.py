@@ -203,12 +203,76 @@ def test_cap_is_measured_on_the_built_frame():
 
     white_lift is additive after the exposure, so scaling exposure alone would
     leave a term untouched and quietly bust the budget the cap promised.
+
+    Overlays off here, so the whole budget belongs to the wash and the frame
+    should land exactly on the cap.
     """
     full = w.estimate_current_a(N, 1.0)
     assert full > 6.0, "reference draw changed; revisit the power budget"
     for cap in (9.0, 8.0, 6.0):
-        peak = w.build_frames(N, steps=2, max_current_a=cap)[-1]
+        peak = w.build_frames(N, steps=2, max_current_a=cap,
+                              sparks=False, shimmer=False)[-1]
         assert _frame_current_a(peak, N) == pytest.approx(cap, rel=0.03)
+
+
+def test_cap_leaves_room_for_the_overlays():
+    """The regression guard for the bug this replaced.
+
+    `max_current_a` promised to cap the 5 V draw but budgeted only the wash, so
+    a 1.5 A cap actually drew 6.1 A once sparks and shimmer landed on top. The
+    wash must now come in *under* the cap by exactly the overlay draw.
+    """
+    cap = 12.0
+    frame = w.build_frames(N, steps=2, max_current_a=cap)[-1]
+    wash = _frame_current_a(frame, N)
+    assert wash < cap, "wash still claims the whole budget — overlays unbudgeted"
+    fitted = w.fit_exposure(N, cap, w.DEFAULT_EXPOSURE)
+    assert w.total_current_a(N, fitted) == pytest.approx(cap, rel=0.03)
+
+
+@pytest.mark.parametrize("cap", [9.0, 10.0, 12.0, 15.0, 16.0])
+def test_no_cap_is_ever_exceeded(cap):
+    """Sweep the settable range: every cap above the overlay floor must hold."""
+    fitted = w.fit_exposure(N, cap, w.DEFAULT_EXPOSURE)
+    assert fitted > 0.0, f"{cap} A is above the floor and should be satisfiable"
+    assert w.total_current_a(N, fitted) <= cap * 1.001
+
+
+def test_total_draw_is_monotone_in_exposure():
+    """Bisection in `fit_exposure` depends on this and it is not obvious.
+
+    Two terms move in opposite directions — the wash climbs with exposure while
+    the overlays fall — so monotonicity is a property of their relative sizes,
+    not a given. If a future tuning pass makes the highlights dominate, the
+    solver silently starts returning the wrong root, and this is what catches it.
+    """
+    draws = [w.total_current_a(N, x / 10.0) for x in range(0, 19)]
+    assert draws == sorted(draws)
+
+
+def test_overlay_draw_rises_as_the_wash_dims():
+    """The reason the old closed-form ratio could not work.
+
+    Highlights blend toward a fixed white point, so a darker base leaves more
+    headroom to cover. Dimming the wash to fit a budget makes the overlays more
+    expensive — the total is not proportional to the exposure.
+    """
+    bright = w.overlay_current_a(N, 1.8)
+    dim = w.overlay_current_a(N, 0.4)
+    assert dim > bright
+
+
+def test_cap_below_the_overlay_floor_reports_zero():
+    """An honest answer beats a dim wash that still busts the limit."""
+    floor = w.overlay_current_a(N, 0.0)
+    assert w.fit_exposure(N, floor * 0.5, w.DEFAULT_EXPOSURE) == 0.0
+
+
+def test_overlay_flags_change_the_fit():
+    cap = 8.0
+    both = w.fit_exposure(N, cap, w.DEFAULT_EXPOSURE, sparks=True, shimmer=True)
+    neither = w.fit_exposure(N, cap, w.DEFAULT_EXPOSURE, sparks=False, shimmer=False)
+    assert neither > both, "disabling the overlays must free budget for the wash"
 
 
 def test_fit_exposure_noop_without_budget():
