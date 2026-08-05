@@ -302,21 +302,3 @@ def test_blend_endpoints():
     base = (214, 15, 10)
     assert w.white_target(0.0, base) == base
     assert w.white_target(1.0, base) == w.WHITE_POINT
-
-
-def test_breathe_uses_a_symmetric_curve_and_release_does_not():
-    """A loop and a one-shot need different easing.
-
-    The emphasized curve (EASE) covers half its travel in the first fifth of the
-    duration. Played once, on the release fade, that is decisive. Played on a
-    loop with `alternate` it is snap-hold-snap-hold — blinking, which is how the
-    page and the strip both looked while they shared it.
-    """
-    # Breathe: symmetric, so half the travel happens at half the time.
-    assert w.ease(0.5, w.BREATHE_EASE) == pytest.approx(0.5, abs=0.02)
-    for i in range(1, 10):
-        x = i / 10.0
-        assert w.ease(x, w.BREATHE_EASE) + w.ease(1.0 - x, w.BREATHE_EASE) == pytest.approx(1.0, abs=0.02)
-
-    # Release keeps the emphasized curve — front-loaded on purpose.
-    assert w.ease(0.25, w.EASE) > 0.5, "release fade should still be decisive"

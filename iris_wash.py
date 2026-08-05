@@ -55,17 +55,6 @@ OVERLAY_TO = ((255, 70, 55), 0.40, 1.00)
 BREATHE_PERIOD_S = 1.8                      # one direction; alternate → 3.6 s cycle
 RELEASE_FADE_S = 0.55                       # body { transition: background .55s }
 EASE = (0.2, 0.0, 0.0, 1.0)                 # cubic-bezier(.2,0,0,1)
-# The breathe loop needs a DIFFERENT curve from the release fade, and that is not
-# a detail. MD3's emphasized easing above is specified for one-shot transitions:
-# it covers half its travel in the first 20 % of the duration and crawls through
-# the rest. Played once — the release fade — that reads as decisive. Played on a
-# loop with `alternate` it reads as snap, hold, snap, hold: blinking, not
-# breathing. That is what it looked like on the strip and on the dB page, which
-# share this curve by design.
-#
-# A symmetric ease-in-out passes through the middle of its travel at the middle
-# of its time, which is what makes a swell read as breath.
-BREATHE_EASE = (0.42, 0.0, 0.58, 1.0)       # cubic-bezier(.42,0,.58,1) = ease-in-out
 ELLIPSE_RX = 1.2                            # radial-gradient(120% ...)
 
 # ---- rendering defaults ----------------------------------------------------
@@ -241,7 +230,7 @@ def build_frames(n: int, steps: int = DEFAULT_STEPS,
         exposure = fitted
     frames = []
     for s in range(steps):
-        e = ease(s / (steps - 1), BREATHE_EASE)
+        e = ease(s / (steps - 1))
         buf = bytearray(n * 4)
         for i in range(n):
             r, g, b = led_rgb(i, n, e, exposure, white)
