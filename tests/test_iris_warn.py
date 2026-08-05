@@ -271,3 +271,36 @@ def test_shockwave_replaces_toward_warm_white():
 def test_spark_boost_never_drops_below_the_tagged_density():
     # factor 1.0 + 0.6*boost: boost=0 → exactly the tagged shower.
     assert "1.0 + 0.6 * boost" in _src()
+
+
+# ---- Standstill artifacts (2026-08-05): stuck green/blue pixels -------------
+
+def test_show_reports_frame_delivery():
+    """A silently dropped clear frame left the strip holding its last image
+    forever. show() must surface the _write result so clear() can retry."""
+    src = (_ROOT / "pio_strip.py").read_text()
+    assert "return self._write(payload)" in src
+
+
+def test_clear_writes_twice_and_only_latches_on_success():
+    """WS2812 is GRB-serialised: one slipped bit shifts crimson's 255 into the
+    green or blue slot — the standstill artifacts ARE our own red. Standard
+    practice: write the blank frame twice (wire errors are per-transmission);
+    and _cleared may only latch when the write actually landed."""
+    src = _src()
+    blk = src[src.index("def clear(self, force=False):"):]
+    blk = blk[:blk.index("\n    def ")]
+    assert "for versuch in range(2):" in blk
+    assert "self.strip.show() is not False" in blk
+    assert "self._cleared = ok" in blk
+    assert "self._cleared = True" not in blk, "unconditional latch is the old bug"
+
+
+def test_idle_reclear_heals_stuck_pixels():
+    """At standstill nothing overwrites a mis-latched pixel — the off branch
+    must re-assert black periodically (2 s), not just once."""
+    src = _src()
+    blk = src[src.index("if not self.power:"):]
+    blk = blk[:blk.index("effects = {")]
+    assert "_last_clear_ts" in blk
+    assert "> 2.0" in blk

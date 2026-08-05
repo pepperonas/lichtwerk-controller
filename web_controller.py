@@ -116,6 +116,20 @@ class LichtwerkWebController:
         sys.exit(0)
     
     def clear(self, force=False):
+        """Blank the strip — and PROVE it, twice.
+
+        WS2812 serialises GRB, so one slipped bit in a 600-LED chain shifts
+        crimson's 255 into the green or blue slot: the classic "LEDs stay
+        green/blue at standstill" artifact is our own red, mis-latched. Two
+        holes let it persist: (1) the PIO device takes ONE frame per open and
+        drops collisions with EBUSY — a clear during 50 fps wave painting
+        could vanish silently; (2) _cleared latched True regardless, blocking
+        every retry. Standard WS2812 practice is writing the frame twice
+        (signal-integrity errors are per-transmission, not sticky), and
+        _cleared only latches when the LAST write really landed — a dropped
+        one retries on the next effect-loop tick. The maintenance re-clear in
+        run_effect heals anything that still slips through.
+        """
         if not self.strip:
             return
         if self._cleared and not force:
@@ -123,13 +137,18 @@ class LichtwerkWebController:
         with self._strip_lock:
             if self._cleared and not force:
                 return
-            if hasattr(self.strip, 'fill'):
-                self.strip.fill(Color(0, 0, 0))
-            else:
-                for i in range(self.strip.numPixels()):
-                    self.strip.setPixelColor(i, Color(0, 0, 0))
-            self.strip.show()
-            self._cleared = True
+            ok = False
+            for versuch in range(2):
+                if versuch:
+                    time.sleep(0.025)   # EBUSY window is the 18 ms shift-out
+                if hasattr(self.strip, 'fill'):
+                    self.strip.fill(Color(0, 0, 0))
+                else:
+                    for i in range(self.strip.numPixels()):
+                        self.strip.setPixelColor(i, Color(0, 0, 0))
+                ok = self.strip.show() is not False   # None (fremde Treiber) = ok
+            self._cleared = ok
+            self._last_clear_ts = time.monotonic()
     
     def wake_effect(self):
         """Interrupt effect-loop sleep so the next frame paints ASAP."""
@@ -926,8 +945,15 @@ class LichtwerkWebController:
             self._paint_wash_fade()
             return
         if not self.power:
-            # One clear when off — don't hammer /dev/leds0 every frame
+            # One clear when off — don't hammer /dev/leds0 every frame. But
+            # re-assert black every 2 s: a pixel that mis-latched during the
+            # last transmission (or survived a dropped clear) holds its wrong
+            # colour indefinitely, and at standstill nothing else would ever
+            # overwrite it. One 18 ms frame every 2 s is free; stuck green/blue
+            # pixels now heal within 2 s instead of never.
             if not self._cleared:
+                self.clear(force=True)
+            elif time.monotonic() - getattr(self, '_last_clear_ts', 0.0) > 2.0:
                 self.clear(force=True)
             return
         

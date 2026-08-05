@@ -138,13 +138,16 @@ class PixelStrip:
             os.close(fd)
 
     def show(self):
+        # Returns the _write result: False = frame dropped (EBUSY/error). A
+        # silently dropped CLEAR frame left the strip holding its last image
+        # forever, because _cleared latched anyway (the standstill artifacts).
         if not self._begun:
             return
         payload = bytes(self._buf)
         scale = self._brightness
         if scale < 255:
             payload = payload.translate(self._brightness_lut(scale))
-        self._write(payload)
+        return self._write(payload)
 
     def show_payload(self, payload: bytes, gain: int = 255):
         """Write a pre-rendered RGBW payload (4 bytes/LED) straight out.
