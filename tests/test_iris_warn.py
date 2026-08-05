@@ -198,9 +198,65 @@ def test_warn_kick_endpoint_is_an_event_not_a_frame():
         "outside iris_warn the event must be a silent no-op"
 
 
-def test_phase_snaps_onto_the_beat():
-    # u == 0 at the kick instant → the ON edge lands ON the beat.
-    assert "(t - 0.21) % 0.55" in _src()
+def test_phase_snaps_onto_the_tempo_locked_grid():
+    # u == 0 at the kick instant → the ON edge lands ON the beat. The modulus
+    # is the MEASURED period, not the fixed 0.55: snapping a fixed 0.3575 s ON
+    # window per kick collapsed the dark phase above ~160 BPM (measured as
+    # "verharrt" — the strip latched solid crimson).
+    assert "(t - 0.21) % iris_period" in _src()
+
+
+def _sim_lit(kick_times, t, period_fallback=0.55):
+    """Mirror of the tempo-locked square: EMA period + 0.24 s snap refractory."""
+    ema, last_kick, last_snap, ph = None, None, -9.0, 0.0
+    for k in [k for k in kick_times if k <= t]:
+        if last_kick is not None and 0.24 <= k - last_kick <= 1.5:
+            ema = (k - last_kick) if ema is None else ema + ((k - last_kick) - ema) * 0.25
+        last_kick = k
+        if k - last_snap >= 0.24:
+            last_snap = k
+            period = max(0.30, min(1.20, ema)) if ema is not None else period_fallback
+            ph = (k - 0.21) % period
+    period = (max(0.30, min(1.20, ema))
+              if ema is not None and last_kick is not None and t - last_kick <= 1.6
+              else period_fallback)
+    u = ((t - 0.21 - ph) / period) % 1.0
+    return u < 0.65
+
+
+def test_dark_phase_survives_every_tempo():
+    """The invariant behind the fix: at ANY kick rate every beat window must
+    contain BOTH lit and dark samples. 175 BPM latched solid before."""
+    for bpm in (100, 123, 140, 160, 175):
+        iv = 60.0 / bpm
+        kicks = [0.5 + i * iv for i in range(40)]
+        # steady state: inspect the window between kick 30 and 31
+        a = kicks[30]
+        samples = [_sim_lit(kicks, a + f * iv) for f in
+                   (0.02, 0.2, 0.4, 0.6, 0.8, 0.95)]
+        assert any(samples), f"{bpm} BPM: never lit"
+        assert not all(samples), f"{bpm} BPM: dark phase collapsed (verharrt)"
+
+
+def test_onset_double_fire_cannot_eat_the_dark_phase():
+    """on_beat fires per onset (snare+kick): pairs 120 ms apart at 123 BPM.
+    The 0.24 s snap refractory must keep the blink alive regardless."""
+    iv = 60.0 / 123
+    kicks = []
+    for i in range(40):
+        kicks += [0.5 + i * iv, 0.5 + i * iv + 0.12]
+    a = 0.5 + 30 * iv
+    samples = [_sim_lit(kicks, a + f * iv) for f in
+               (0.02, 0.2, 0.4, 0.6, 0.8, 0.95)]
+    assert any(samples) and not all(samples), "double-fire collapsed the blink"
+
+
+def test_free_run_fallback_keeps_the_tagged_period():
+    # No kicks at all → the tagged 0.55 s / 65 % square, bit-identical maths.
+    assert iris_phase(0.21) == _sim_lit([], 0.21)
+    for i in range(60):
+        t = 0.25 + i * 0.031
+        assert iris_phase(t) == _sim_lit([], t), f"free-run diverged at t={t}"
 
 
 def test_shockwave_replaces_toward_warm_white():

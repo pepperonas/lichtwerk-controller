@@ -760,6 +760,9 @@ class LichtwerkWebController:
             self.effect_params['iris_sparking'] = None
             self.effect_params['iris_spark_until'] = 0.0
             self.effect_params['iris_ph'] = 0.0          # square-wave phase offset (kick sync)
+            self.effect_params['iris_beat_ema'] = None   # measured inter-kick interval (tempo lock)
+            self.effect_params['iris_last_kick'] = None
+            self.effect_params['iris_last_snap'] = -9.0  # snap refractory vs onset double-fire
             self.effect_params['iris_waves'] = []        # [{'born': t, 's': strength}]
             self.effect_params['iris_kick_boost'] = 0.0  # spark density ∝ last kick strength
             self.effect_params['iris_next_paint'] = 0.0  # wave repaint pacing (~50 fps)
@@ -767,20 +770,57 @@ class LichtwerkWebController:
 
         # ── Kick intake (Flask thread appends plain floats; GIL-safe pops) ──
         q = self.effect_params.get('iris_kicks')
+        snap = False
         while q:
             try:
                 ks = max(0.0, min(1.0, float(q.pop(0))))
             except (TypeError, ValueError, IndexError):
                 break
-            if t >= 0.21:
-                # Snap the phase: u == 0 right now → rising edge ON the beat.
-                self.effect_params['iris_ph'] = (t - 0.21) % 0.55
+            lk = self.effect_params.get('iris_last_kick')
+            if lk is not None:
+                dt_k = t - lk
+                # Plausible beat gaps only (40-250 BPM): onset double-fire and
+                # dropouts must not poison the tempo estimate.
+                if 0.24 <= dt_k <= 1.5:
+                    ema = self.effect_params.get('iris_beat_ema')
+                    # Fold missed-beat gaps back onto the grid: a skipped onset
+                    # shows up as ~2x the beat interval and dragged the EMA up
+                    # (measured 0.572 s against a 0.488 s beat) — halve instead
+                    # of averaging in the outlier.
+                    if ema is not None:
+                        while dt_k > ema * 1.6 and dt_k >= 0.48:
+                            dt_k /= 2.0
+                    self.effect_params['iris_beat_ema'] = \
+                        dt_k if ema is None else ema + (dt_k - ema) * 0.25
+            self.effect_params['iris_last_kick'] = t
+            # Refractory 0.24 s: on_beat fires on EVERY onset (snares/offbeats
+            # included), and a snap per onset re-lights the window until the
+            # dark phase collapses — the measured "verharrt" failure.
+            if t - self.effect_params.get('iris_last_snap', -9.0) >= 0.24:
+                self.effect_params['iris_last_snap'] = t
+                snap = True
             self.effect_params['iris_spark_until'] = t + 0.055
             self.effect_params['iris_kick_boost'] = ks
             waves = self.effect_params['iris_waves']
             waves.append({'born': t, 's': ks})
             if len(waves) > 3:
                 waves.pop(0)
+
+        # Tempo lock: the square's period IS the measured beat interval, so ON
+        # 65 % / DARK 35 % hold for every REAL beat at any tempo. The original
+        # snap kept the fixed 0.3575 s ON window and re-lit it per kick — above
+        # ~160 BPM (or any onset burst) the dark phase hit zero and the strip
+        # latched solid crimson. Stale (>1.6 s without kicks) → the tagged
+        # 0.55 s free-run takes over: fallback IS the tag.
+        ema = self.effect_params.get('iris_beat_ema')
+        lk = self.effect_params.get('iris_last_kick')
+        if ema is not None and lk is not None and t - lk <= 1.6:
+            iris_period = max(0.30, min(1.20, ema))
+        else:
+            iris_period = 0.55
+        if snap and t >= 0.21:
+            # u == 0 right now → rising edge ON the beat.
+            self.effect_params['iris_ph'] = (t - 0.21) % iris_period
 
         # CSS peak rgba(255,70,55) — full punch, flat strip (no radial soft)
         hr, hg, hb = 255, 70, 55
@@ -790,10 +830,10 @@ class LichtwerkWebController:
         if t < 0.21:
             lit = not (0.07 <= t < 0.13)
         else:
-            # Square wave keyed to body transition (.55s) — hard edges only.
-            # iris_ph rests at 0.0 → identical to the tagged free-run.
-            period = 0.55
-            u = ((t - 0.21 - self.effect_params.get('iris_ph', 0.0)) / period) % 1.0
+            # Square wave: tempo-locked period while kicks flow, the tagged
+            # period = 0.55 free-run otherwise; iris_ph rests at 0.0 → without
+            # kicks every frame is identical to perfekt-20260805.
+            u = ((t - 0.21 - self.effect_params.get('iris_ph', 0.0)) / iris_period) % 1.0
             lit = u < 0.65  # ~65% ON / 35% BLACK
 
         last = self.effect_params.get('iris_lit')
@@ -950,6 +990,9 @@ class LichtwerkWebController:
             # Frames the kernel refused. Non-zero means we are writing into an
             # in-flight DMA transfer — the pacing is off, not the paint.
             'dropped_frames': getattr(self.strip, 'dropped_frames', 0) if self.strip else 0,
+            'iris_beat_s': (round(self.effect_params['iris_beat_ema'], 3)
+                            if self.current_effect == 'iris_warn'
+                            and self.effect_params.get('iris_beat_ema') else None),
             'theater_rainbow': self.theater_rainbow,
             'led_count': self.strip.numPixels() if self.strip else 50,
             'pin': self.config['led_config']['pin']
