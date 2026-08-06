@@ -872,6 +872,10 @@ class LichtwerkWebController:
             self.effect_params['iris_kick_boost'] = 0.0  # spark density ∝ last kick strength
             self.effect_params['iris_next_paint'] = 0.0  # wave repaint pacing (~50 fps)
             self.effect_params['iris_next_heal'] = 0.0   # heartbeat: hold-phase re-send (bit-slip healing)
+            self.effect_params['iris_kick_avg'] = 0.0    # traeges Staerke-Mittel -> Drop-Erkennung
+            self.effect_params['iris_drop_t0'] = None    # Blinder-Choreografie laeuft ab hier
+            self.effect_params['iris_drop_at'] = -1e9    # Cooldown 8 s — Bomben sind rar
+            self.effect_params['iris_last_write'] = 0.0  # EIN Schreibtakt fuer ALLE Pfade
         t = _time.monotonic() - t0
 
         # ── Kick intake (Flask thread appends plain floats; GIL-safe pops) ──
@@ -920,6 +924,14 @@ class LichtwerkWebController:
                 snap = True
             self.effect_params['iris_spark_until'] = t + 0.055
             self.effect_params['iris_kick_boost'] = ks
+            avg = self.effect_params.get('iris_kick_avg', 0.0)
+            self.effect_params['iris_kick_avg'] = avg + (ks - avg) * 0.15
+            # Drop: sehr harter Schlag nach laenger anliegender Energie —
+            # der Strip zuendet denselben Blinder-Moment wie die Seite.
+            if ks >= 0.9 and avg >= 0.5 \
+                    and t - self.effect_params.get('iris_drop_at', -1e9) > 8.0:
+                self.effect_params['iris_drop_at'] = t
+                self.effect_params['iris_drop_t0'] = t
             waves = self.effect_params['iris_waves']
             waves.append({'born': t, 's': ks})
             if len(waves) > 3:
@@ -946,6 +958,25 @@ class LichtwerkWebController:
         # CSS peak rgba(255,70,55) — full punch, flat strip (no radial soft)
         hr, hg, hb = 255, 70, 55
 
+        # ── Drop-Blinder: Triple-Weissblitz (Spiegel der Seiten-Bomb) ──
+        # Volles Warmweiss bei 600 LEDs waeren ~33 A — der Blinder faehrt bei
+        # 55 % Gain und bleibt damit in der Stromklasse des Vollrot-Blitzes
+        # (Stromspitzen druecken die 5-V-Schiene und verschaerfen genau die
+        # Bit-Slips, gegen die der Heartbeat kaempft).
+        drop_t0 = self.effect_params.get('iris_drop_t0')
+        blinder = None   # None = normal; sonst (an: bool, gain: float)
+        if drop_t0 is not None:
+            db_t = t - drop_t0
+            if db_t < 0.40:
+                for a, b_, g_ in ((0.0, 0.07, 1.0), (0.13, 0.22, 1.0), (0.30, 0.40, 0.7)):
+                    if a <= db_t < b_:
+                        blinder = (True, g_)
+                        break
+                else:
+                    blinder = (False, 0.0)
+            else:
+                self.effect_params['iris_drop_t0'] = None
+
         # ── Engage: two hard pulses (Aufleuchten) ──
         # ON 70ms · OFF 60ms · ON 80ms, then sustain
         if t < 0.21:
@@ -957,6 +988,8 @@ class LichtwerkWebController:
             u = ((t - 0.21 - self.effect_params.get('iris_ph', 0.0)) / iris_period) % 1.0
             lit = u < 0.65  # ~65% ON / 35% BLACK
 
+        if blinder is not None:
+            lit = blinder[0]
         last = self.effect_params.get('iris_lit')
         if lit and last is not True:
             # Rising edge → arm a ~55 ms white-spark window
@@ -983,14 +1016,22 @@ class LichtwerkWebController:
             # GRB-Bit-Slip (verrutschtes Rot = GRUEN) im zuletzt gesendeten
             # Frame stand sonst das GANZE Haltefenster sichtbar — die Flanken-
             # Optimierung hielt die Korruption fest. Uebertragungsfehler sind
-            # per-Transmission, nicht klebrig: alle 0.12 s neu senden heilt
-            # jeden Slip binnen 120 ms, kostet ~15 % Wire-Duty (18 ms/Frame).
+            # per-Transmission, nicht klebrig: alle 0.08 s neu senden heilt
+            # jeden Slip binnen 80 ms, kostet ~15 % Wire-Duty (18 ms/Frame).
             now_hb = _time.monotonic()
             if now_hb < self.effect_params.get('iris_next_heal', 0.0):
                 return
-            self.effect_params['iris_next_heal'] = now_hb + 0.12
+            self.effect_params['iris_next_heal'] = now_hb + 0.08
         self.effect_params['iris_lit'] = lit
         self.effect_params['iris_sparking'] = spark
+
+        # EIN Schreibtakt fuer alle Pfade: 20 ms Boden (= die 18-ms-Drahtzeit).
+        # Schneller zu wollen erzeugt nur EBUSY-Drops — und ein verworfener
+        # Frame ist ein 20-ms-Fenster, in dem ein Slip-Fragment stehen bleibt.
+        now_w = _time.monotonic()
+        if now_w - self.effect_params.get('iris_last_write', 0.0) < 0.02:
+            return
+        self.effect_params['iris_last_write'] = now_w
 
         scale = max(0.0, min(1.0, self.brightness / 255.0))
         n = self.strip.numPixels()
@@ -1003,7 +1044,11 @@ class LichtwerkWebController:
             self.clear(force=True)
             return
 
-        c = Color(int(hr * scale), int(hg * scale), int(hb * scale))
+        if blinder is not None and blinder[0]:
+            bg = scale * 0.55 * blinder[1]
+            c = Color(int(255 * bg), int(232 * bg), int(214 * bg))
+        else:
+            c = Color(int(hr * scale), int(hg * scale), int(hb * scale))
         dark = Color(0, 0, 0)
         base = c if lit else dark
         if hasattr(self.strip, 'fill') and not waves:
@@ -1016,7 +1061,12 @@ class LichtwerkWebController:
         # Replace-blend toward warm white keeps per-LED current ≈ crimson+Δ;
         # the front burns brightest young and cools as it travels.
         if waves:
-            wr, wg, wb = 255, 226, 214   # warm white — red/white scheme, never blue-ish
+            # Zweizoniger Wellenkopf (2026-08-06): weissgluehender KERN in einem
+            # heissroten HALO — vorher ein einzelner Blend, der auf halber
+            # Strecke als blasses Rosa las (genau die "Fragmente"-Optik).
+            # Replace-Blend bleibt: Strombudget ≈ Vollrot.
+            wr, wg, wb = 255, 232, 214   # warm white core — never blue-ish
+            xr, xg, xb = 255, 110, 80    # hot red halo
             centre = n / 2.0
             half = centre
             for w in waves:
@@ -1027,21 +1077,33 @@ class LichtwerkWebController:
                 cool = max(0.0, 1.0 - (dist / max(1.0, half)) * 0.45)
                 lo = max(0, int(centre - dist - width * 3))
                 hi = min(n - 1, int(centre + dist + width * 3))
+                cw = width * 0.45
                 for i in range(lo, hi + 1):
                     d = abs(abs(i - centre) - dist)
                     if d > width * 3:
                         continue
-                    g = cool * w['s'] * (2.718281828 ** (-(d * d) / (2.0 * width * width)))
-                    if g <= 0.02:
+                    halo = cool * w['s'] * (2.718281828 ** (-(d * d) / (2.0 * width * width)))
+                    if halo <= 0.02:
                         continue
+                    core = cool * w['s'] * (2.718281828 ** (-(d * d) / (2.0 * cw * cw)))
                     br, bg_, bb = (hr, hg, hb) if lit else (0, 0, 0)
+                    r_ = br + (xr - br) * halo
+                    g_ = bg_ + (xg - bg_) * halo
+                    b_ = bb + (xb - bb) * halo
+                    if core > 0.02:
+                        r_ += (wr - r_) * core
+                        g_ += (wg - g_) * core
+                        b_ += (wb - b_) * core
                     self.strip.setPixelColor(i, Color(
-                        int((br + (wr - br) * g) * scale),
-                        int((bg_ + (wg - bg_) * g) * scale),
-                        int((bb + (wb - bb) * g) * scale)))
+                        int(min(255, r_) * scale),
+                        int(min(255, g_) * scale),
+                        int(min(255, b_) * scale)))
 
         if spark and n > 0:
-            w = Color(int(255 * scale), int(255 * scale), int(255 * scale))
+            # Warmweiss statt Vollweiss: ~12 % weniger Spitzenstrom auf der
+            # 5-V-Schiene (Spannungseinbrueche = mehr Bit-Slips) und im
+            # Rot/Weiss-Schema der ehrlichere Ton.
+            w = Color(int(255 * scale), int(224 * scale), int(205 * scale))
             # ~8% of strip (was ~12 LEDs); cap so crimson base stays visible
             k = min(n, min(80, max(24 if n >= 48 else 3, n // 12)))
             k = min(k, max(1, (n * 2) // 5))  # ≤40% white

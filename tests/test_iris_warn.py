@@ -264,8 +264,14 @@ def test_shockwave_replaces_toward_warm_white():
     warm white — additive blending would stack current on top of full crimson,
     and 600 LEDs of full white would be ~36 A."""
     src = _src()
-    assert "255, 226, 214" in src, "front must stay warm white (red/white scheme)"
-    assert "(wr - br) * g" in src, "replace-blend, not addition"
+    # 2026-08-06: zweizoniger Kopf — weisser Kern (255,232,214) in heissrotem
+    # Halo (255,110,80); der alte Einzel-Blend las auf halber Strecke als Rosa.
+    assert "255, 232, 214" in src, "core must stay warm white (red/white scheme)"
+    assert "255, 110, 80" in src, "halo must stay hot red"
+    # Replace-Blend in beiden Zonen: Halo mischt zur Zielfarbe, der Kern
+    # mischt vom Halo-Ergebnis weiter Richtung Weiss — nie additiv aufs Rot.
+    assert "(xr - br) * halo" in src, "halo must replace-blend, not add"
+    assert "(wr - r_) * core" in src, "core must replace-blend on top of the halo"
 
 
 def test_spark_boost_never_drops_below_the_tagged_density():
@@ -341,6 +347,37 @@ def test_hold_phases_heal_bit_slips_via_heartbeat():
     the dark branch force-clears so black gets re-proven too."""
     src = _src()
     assert "iris_next_heal" in src
-    assert "+ 0.12" in src
+    assert "+ 0.08" in src   # 2026-08-06: Heilung 120 -> 80 ms (einheitlicher Schreibtakt macht es sicher)
     blitz = src[src.index("def effect_iris_warn"):src.index("def run_effect")]
     assert "self.clear(force=True)" in blitz, "dark phase must re-prove black"
+
+
+
+def test_strip_drop_blinder_mirrors_the_page_bomb():
+    """The strip fires the same dramaturgy as the page: a very hard kick after
+    sustained energy (avg EMA) triggers a triple white blinder — at 55 % gain,
+    because full warm white on 600 LEDs would be ~33 A and current spikes on
+    the 5 V rail cause exactly the bit-slips the heartbeat fights. 8 s
+    cooldown: bombs that repeat are wallpaper."""
+    src = _src()
+    assert "if ks >= 0.9 and avg >= 0.5" in src
+    assert "> 8.0" in src
+    assert "(0.0, 0.07, 1.0), (0.13, 0.22, 1.0), (0.30, 0.40, 0.7)" in src
+    assert "scale * 0.55 * blinder[1]" in src, "blinder stays in the crimson current class"
+
+
+def test_one_write_clock_for_all_paths():
+    """Every paint path shares one 20 ms floor (= the 18 ms wire time).
+    Racing the wire only produces EBUSY drops, and a dropped frame is a
+    20 ms window in which a slip fragment stands."""
+    src = _src()
+    assert "iris_last_write" in src
+    assert "< 0.02:" in src
+
+
+def test_sparks_are_warm_white_not_full_white():
+    src = _src()
+    blitz = src[src.index("if spark and n > 0:"):]
+    blitz = blitz[:blitz.index("self.strip.show()")]
+    assert "int(224 * scale)" in blitz and "int(205 * scale)" in blitz, \
+        "full white spikes the rail; warm white is the honest highlight"
