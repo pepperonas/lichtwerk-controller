@@ -331,3 +331,16 @@ def test_shutdown_joins_the_painter_before_the_final_clear():
     assert "self.effect_thread.join" in h
     assert "self.clear(force=True)" in h
     assert h.index("join") < h.index("clear(force=True)"), "join must come first"
+
+
+def test_hold_phases_heal_bit_slips_via_heartbeat():
+    """A GRB bit-slip (shifted crimson = GREEN) in the last transmitted frame
+    used to STAND for the whole hold window — the edge-only rewrite held the
+    corruption in place. Wire errors are per-transmission, not sticky: the
+    heartbeat re-sends every 0.12 s, so a slip lives 120 ms instead of a beat;
+    the dark branch force-clears so black gets re-proven too."""
+    src = _src()
+    assert "iris_next_heal" in src
+    assert "+ 0.12" in src
+    blitz = src[src.index("def effect_iris_warn"):src.index("def run_effect")]
+    assert "self.clear(force=True)" in blitz, "dark phase must re-prove black"

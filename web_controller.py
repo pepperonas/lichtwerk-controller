@@ -871,6 +871,7 @@ class LichtwerkWebController:
             self.effect_params['iris_waves'] = []        # [{'born': t, 's': strength}]
             self.effect_params['iris_kick_boost'] = 0.0  # spark density ∝ last kick strength
             self.effect_params['iris_next_paint'] = 0.0  # wave repaint pacing (~50 fps)
+            self.effect_params['iris_next_heal'] = 0.0   # heartbeat: hold-phase re-send (bit-slip healing)
         t = _time.monotonic() - t0
 
         # ── Kick intake (Flask thread appends plain floats; GIL-safe pops) ──
@@ -978,7 +979,16 @@ class LichtwerkWebController:
                 return
             self.effect_params['iris_next_paint'] = now_m + 0.02
         elif last is lit and last_spark is spark:
-            return  # only rewrite on lit/spark edges
+            # Heartbeat statt reiner Flanken-Optimierung (2026-08-06): ein
+            # GRB-Bit-Slip (verrutschtes Rot = GRUEN) im zuletzt gesendeten
+            # Frame stand sonst das GANZE Haltefenster sichtbar — die Flanken-
+            # Optimierung hielt die Korruption fest. Uebertragungsfehler sind
+            # per-Transmission, nicht klebrig: alle 0.12 s neu senden heilt
+            # jeden Slip binnen 120 ms, kostet ~15 % Wire-Duty (18 ms/Frame).
+            now_hb = _time.monotonic()
+            if now_hb < self.effect_params.get('iris_next_heal', 0.0):
+                return
+            self.effect_params['iris_next_heal'] = now_hb + 0.12
         self.effect_params['iris_lit'] = lit
         self.effect_params['iris_sparking'] = spark
 
@@ -986,7 +996,11 @@ class LichtwerkWebController:
         n = self.strip.numPixels()
 
         if not lit and not waves:
-            self.clear()
+            # force: auf Flanken ist _cleared ohnehin False (identisch), aber
+            # der Heartbeat muss auch SCHWARZ neu beweisen koennen — ein heller
+            # Slip stand sonst das ganze Dunkelfenster (der _cleared-Guard
+            # blockte genau die Heilung, die der Heartbeat bringen soll).
+            self.clear(force=True)
             return
 
         c = Color(int(hr * scale), int(hg * scale), int(hb * scale))
