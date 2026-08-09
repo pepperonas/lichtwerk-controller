@@ -1122,13 +1122,27 @@ class LichtwerkWebController:
             # mehr', uebrig blieb gruenlicher Murks. Fast-gleiche niedrige
             # Kanaele sterben in der Gamma; ein dominanter Kanal wie das Rot
             # ueberlebt sie. Die LUT wird unten pro Frame neutralisiert.
-            bg = 0.55 * blinder[1]
+            # Strom-Realitaet (2026-08-09, Feldbefund Runde 2): die LED-Last
+            # bestimmt der POST-GAMMA-Wert, nicht das Payload — das bewaehrte
+            # Rot lief real bei ~2,7 mA/LED (Payload 100 -> Gamma-Duty 32).
+            # Volles Warmweiss-Payload (140) -> Duty 68 zieht ~10x mehr, und
+            # dieser Sprung auf 1200 LEDs drueckt die 5-V-Schiene: genau dann
+            # kippen Bits auf der marginalen 3,3-V-Y-Leitung (gruene
+            # Artefakte ZU den Blitzen). Deshalb Gain 0.45 + unten die
+            # Halbdichte-Maske (jede 2. LED) — zusammen ~1/4 der Transiente,
+            # optisch weiter ein Vollflaechen-Blitz.
+            bg = 0.45 * blinder[1]
             c = Color(int(255 * bg), int(232 * bg), int(214 * bg))
         else:
             c = Color(int(hr * scale), int(hg * scale), int(hb * scale))
         dark = Color(0, 0, 0)
         base = c if lit else dark
-        if hasattr(self.strip, 'fill') and not waves:
+        if blind_on:
+            # Halbdichte-Blinder: jede 2. LED — halbiert den Stromsprung,
+            # liest auf Raumdistanz weiter als geschlossene Lichtflaeche.
+            for i in range(n):
+                self.strip.setPixelColor(i, c if (i & 1) == 0 else dark)
+        elif hasattr(self.strip, 'fill') and not waves:
             self.strip.fill(base)
         else:
             for i in range(n):
