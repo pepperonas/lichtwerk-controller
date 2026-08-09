@@ -365,7 +365,8 @@ def test_strip_drop_blinder_mirrors_the_page_bomb():
     assert "if ks >= 0.9 and avg >= 0.5" in src
     assert "> 8.0" in src
     assert "(0.0, 0.07, 1.0), (0.13, 0.22, 1.0), (0.30, 0.40, 0.7)" in src
-    assert "scale * 0.55 * blinder[1]" in src, "blinder stays in the crimson current class"
+    assert "bg = 0.55 * blinder[1]" in src, \
+        "blinder stays in the 55% current class — absolute since 2026-08-09 (LUT+gamma crush)"
 
 
 def test_one_write_clock_for_all_paths():
@@ -382,7 +383,7 @@ def test_sparks_are_ember_not_white():
     Interpunktion und gehoert exklusiv den Event-Blindern + Drop. Nebeneffekt:
     weniger Spitzenstrom als das alte Warmweiss."""
     src = _src()
-    blitz = src[src.index("if spark and n > 0:"):]
+    blitz = src[src.index("if spark and n > 0 and not blind_on:"):]
     blitz = blitz[:blitz.index("self.strip.show()")]
     assert "int(176 * scale)" in blitz and "int(64 * scale)" in blitz, \
         "sparks must be ember amber; white belongs to the blinders"
@@ -457,8 +458,13 @@ def test_warn_event_route_and_intake_contracts():
     assert "if self.effect_params.get('iris_blinder') is not None:" in src, \
         "a running plan (esp. the drop) must win over a late event"
     assert "iris_drop_t0" not in src, "the old drop-only path must be fully replaced"
-    # Blinder bleibt in der erprobten 55-%-Stromklasse
-    assert "scale * 0.55 * blinder[1]" in src
+    # Blinder bleibt in der erprobten 55-%-Stromklasse — aber ABSOLUT:
+    # unabhaengig von controller.brightness UND der Strip-LUT (Feldbefund
+    # 2026-08-09: LUT 100/255 + Kernel-Gamma = unsichtbarer gruener Murks).
+    assert "bg = 0.55 * blinder[1]" in src
+    assert "scale * 0.55" not in src, "the blinder must not scale with the mood dimmer"
+    assert "want = 255 if blind_on else" in src, "blinder frames must neutralise the strip LUT"
+    assert "if spark and n > 0 and not blind_on:" in src, "no sparks into a blinder frame"
 
 
 def test_blinder_frames_are_resent_continuously():

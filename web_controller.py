@@ -124,6 +124,9 @@ class LichtwerkWebController:
         else:
             self.strip = MultiStrip(working)
         
+        # Konfigurierte Anlagen-Helligkeit der Strip-LUT — der Blinder
+        # neutralisiert sie pro Frame und stellt sie danach wieder her.
+        self.strip_lut_default = int(led_cfg.get('led_brightness', 255))
         # State variables
         self.running = True
         self.power = False
@@ -1093,6 +1096,14 @@ class LichtwerkWebController:
         scale = max(0.0, min(1.0, self.brightness / 255.0))
         n = self.strip.numPixels()
 
+        # Strip-LUT pro Frame setzen statt Zustand zu merken (selbstheilend):
+        # Blinder-ON-Frames fahren mit neutraler LUT (voller Payload), alles
+        # andere mit der konfigurierten Anlagen-Helligkeit.
+        if hasattr(self.strip, 'setBrightness'):
+            want = 255 if blind_on else int(getattr(self, 'strip_lut_default', 255))
+            if self.strip.getBrightness() != want:
+                self.strip.setBrightness(want)
+
         if not lit and not waves:
             # force: auf Flanken ist _cleared ohnehin False (identisch), aber
             # der Heartbeat muss auch SCHWARZ neu beweisen koennen — ein heller
@@ -1101,8 +1112,17 @@ class LichtwerkWebController:
             self.clear(force=True)
             return
 
-        if blinder is not None and blinder[0]:
-            bg = scale * 0.55 * blinder[1]
+        blind_on = blinder is not None and blinder[0]
+        if blind_on:
+            # Event-Charakter (2026-08-09): der Blinder zuendet in seiner
+            # festen, validierten 55-%-Stromklasse — UNABHAENGIG von beiden
+            # Dimm-Schichten. Feldbefund: die Strip-LUT (led_brightness=100)
+            # plus Kernel-Gamma (ws2812-pio-rp1, hart codiert) quetschten das
+            # skalierte Warmweiss auf ~(8,7,6) — 'weiss strahlt keine LED
+            # mehr', uebrig blieb gruenlicher Murks. Fast-gleiche niedrige
+            # Kanaele sterben in der Gamma; ein dominanter Kanal wie das Rot
+            # ueberlebt sie. Die LUT wird unten pro Frame neutralisiert.
+            bg = 0.55 * blinder[1]
             c = Color(int(255 * bg), int(232 * bg), int(214 * bg))
         else:
             c = Color(int(hr * scale), int(hg * scale), int(hb * scale))
@@ -1117,7 +1137,7 @@ class LichtwerkWebController:
         # ── Shockwaves: white-hot front racing centre → both ends ──
         # Replace-blend toward warm white keeps per-LED current ≈ crimson+Δ;
         # the front burns brightest young and cools as it travels.
-        if waves:
+        if waves and not blind_on:
             # Zweizoniger Wellenkopf (2026-08-06): weissgluehender KERN in einem
             # heissroten HALO — vorher ein einzelner Blend, der auf halber
             # Strecke als blasses Rosa las (genau die "Fragmente"-Optik).
@@ -1158,7 +1178,7 @@ class LichtwerkWebController:
                         int(min(255, g_) * scale),
                         int(min(255, b_) * scale)))
 
-        if spark and n > 0:
+        if spark and n > 0 and not blind_on:
             # Glut statt Weiss (2026-08-09, Nutzerentscheid): Weiss gehoert
             # exklusiv den Event-Blindern + Drop — die Per-Kick-Funken sind
             # Bernstein wie die Glut-Blobs der Seite. Nebeneffekt: nochmal
