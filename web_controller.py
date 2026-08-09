@@ -852,6 +852,14 @@ class LichtwerkWebController:
         last phase, waves expire, boost decays. Fallback IS the tag.
         Club-lighting research behind the shape: motion/chase carries energy,
         strobe accents belong ON musical hits, restraint preserves impact.
+
+        Weiss-Events (2026-08-09): disco klassifiziert schnelle Onsets zu
+        double/roll/accent (POST /api/warn_event) und der Blinder-Scheduler
+        rendert die FORM des Events — Doppel-Blitz im echt gemessenen
+        Kick-Abstand, Rollen-Stakkato, Einzelschlag; der Drop nutzt den
+        Scheduler als Preset. Per-Kick-Funken + Wellenkern sind seither
+        GLUT (Bernstein) statt Weiss: Weiss ist Interpunktion, Rot (und
+        seine Glut) ist die Stimmung.
         """
         if not self.strip:
             return
@@ -873,7 +881,8 @@ class LichtwerkWebController:
             self.effect_params['iris_next_paint'] = 0.0  # wave repaint pacing (~50 fps)
             self.effect_params['iris_next_heal'] = 0.0   # heartbeat: hold-phase re-send (bit-slip healing)
             self.effect_params['iris_kick_avg'] = 0.0    # traeges Staerke-Mittel -> Drop-Erkennung
-            self.effect_params['iris_drop_t0'] = None    # Blinder-Choreografie laeuft ab hier
+            self.effect_params['iris_blinder'] = None    # Blinder-Plan {'t0', 'win': ((a,b,gain),...)}
+            self.effect_params['iris_events'] = []       # double/roll/accent von disco (verderblich)
             self.effect_params['iris_drop_at'] = -1e9    # Cooldown 8 s — Bomben sind rar
             self.effect_params['iris_last_write'] = 0.0  # EIN Schreibtakt fuer ALLE Pfade
         t = _time.monotonic() - t0
@@ -931,11 +940,43 @@ class LichtwerkWebController:
             if ks >= 0.9 and avg >= 0.5 \
                     and t - self.effect_params.get('iris_drop_at', -1e9) > 8.0:
                 self.effect_params['iris_drop_at'] = t
-                self.effect_params['iris_drop_t0'] = t
+                # Drop = Preset desselben Blinder-Schedulers wie die Events.
+                self.effect_params['iris_blinder'] = {
+                    't0': t,
+                    'win': ((0.0, 0.07, 1.0), (0.13, 0.22, 1.0), (0.30, 0.40, 0.7))}
             waves = self.effect_params['iris_waves']
             waves.append({'born': t, 's': ks})
             if len(waves) > 3:
                 waves.pop(0)
+
+        # ── Weiss-Event-Intake (2026-08-09): double/roll/accent von disco ──
+        # Weiss ist Interpunktion: der Vollflaechen-Blinder feuert nur noch
+        # auf erkannte Rhythmus-Events (Seiten-Paritaet; "keep the strobe
+        # off until the music earns it"). Ein laufender Plan — insbesondere
+        # der Drop — gewinnt: Events sind verderblich wie Kicks, ein spaeter
+        # Blinder ist schlimmer als keiner.
+        evq = self.effect_params.get('iris_events')
+        while evq:
+            try:
+                ev = evq.pop(0)
+            except IndexError:
+                break
+            if self.effect_params.get('iris_blinder') is not None:
+                continue
+            g = ev.get('gap', 0.16)
+            m = ev.get('n', 2)
+            kind = ev.get('kind')
+            if kind == 'double':
+                # Zwei Schlaege im ECHT gemessenen Kick-Abstand — das Licht
+                # echot den Rhythmus (das Signaturdetail der Seite).
+                win = ((0.0, 0.07, 1.0), (g, g + 0.07, 0.85))
+            elif kind == 'roll':
+                # Stakkato im Roll-Tempo, abklingend — nie unter halbe Kraft.
+                win = tuple((i * g, i * g + 0.055, max(0.5, 1.0 - i * 0.14))
+                            for i in range(m))
+            else:
+                win = ((0.0, 0.09, 1.0),)   # accent: der klassische Einzelschlag
+            self.effect_params['iris_blinder'] = {'t0': t, 'win': win}
 
         # Tempo lock: the square's period IS the measured beat interval, so ON
         # 65 % / DARK 35 % hold for every REAL beat at any tempo. The original
@@ -958,24 +999,27 @@ class LichtwerkWebController:
         # CSS peak rgba(255,70,55) — full punch, flat strip (no radial soft)
         hr, hg, hb = 255, 70, 55
 
-        # ── Drop-Blinder: Triple-Weissblitz (Spiegel der Seiten-Bomb) ──
-        # Volles Warmweiss bei 600 LEDs waeren ~33 A — der Blinder faehrt bei
-        # 55 % Gain und bleibt damit in der Stromklasse des Vollrot-Blitzes
+        # ── Blinder-Scheduler: Vollflaechen-Weiss als Fensterplan ──
+        # Volles Warmweiss bei 600 LEDs waeren ~33 A — jeder Blinder faehrt
+        # bei 55 % Gain und bleibt in der Stromklasse des Vollrot-Blitzes
         # (Stromspitzen druecken die 5-V-Schiene und verschaerfen genau die
-        # Bit-Slips, gegen die der Heartbeat kaempft).
-        drop_t0 = self.effect_params.get('iris_drop_t0')
+        # Bit-Slips, gegen die der Heartbeat kaempft). Zwischen den Fenstern
+        # erzwingt der Plan SCHWARZ — die harte Dunkelphase zwischen den
+        # Peaks ist die Blinder-Signatur (dieselbe Kurve, die auf der Seite
+        # per Opacity-Sampling gemessen wurde: Peak, dunkel, Peak).
+        bl = self.effect_params.get('iris_blinder')
         blinder = None   # None = normal; sonst (an: bool, gain: float)
-        if drop_t0 is not None:
-            db_t = t - drop_t0
-            if db_t < 0.40:
-                for a, b_, g_ in ((0.0, 0.07, 1.0), (0.13, 0.22, 1.0), (0.30, 0.40, 0.7)):
-                    if a <= db_t < b_:
+        if bl is not None:
+            bl_t = t - bl['t0']
+            if bl_t < bl['win'][-1][1]:
+                for a, b_, g_ in bl['win']:
+                    if a <= bl_t < b_:
                         blinder = (True, g_)
                         break
                 else:
                     blinder = (False, 0.0)
             else:
-                self.effect_params['iris_drop_t0'] = None
+                self.effect_params['iris_blinder'] = None
 
         # ── Engage: two hard pulses (Aufleuchten) ──
         # ON 70ms · OFF 60ms · ON 80ms, then sustain
@@ -1065,7 +1109,9 @@ class LichtwerkWebController:
             # heissroten HALO — vorher ein einzelner Blend, der auf halber
             # Strecke als blasses Rosa las (genau die "Fragmente"-Optik).
             # Replace-Blend bleibt: Strombudget ≈ Vollrot.
-            wr, wg, wb = 255, 232, 214   # warm white core — never blue-ish
+            # Glut statt Weiss (2026-08-09): Gold-Bernstein-Kern im heissroten
+            # Halo — Weiss gehoert exklusiv den Event-Blindern + Drop.
+            wr, wg, wb = 255, 190, 96    # ember-gold core — never blue-ish
             xr, xg, xb = 255, 110, 80    # hot red halo
             centre = n / 2.0
             half = centre
@@ -1100,10 +1146,11 @@ class LichtwerkWebController:
                         int(min(255, b_) * scale)))
 
         if spark and n > 0:
-            # Warmweiss statt Vollweiss: ~12 % weniger Spitzenstrom auf der
-            # 5-V-Schiene (Spannungseinbrueche = mehr Bit-Slips) und im
-            # Rot/Weiss-Schema der ehrlichere Ton.
-            w = Color(int(255 * scale), int(224 * scale), int(205 * scale))
+            # Glut statt Weiss (2026-08-09, Nutzerentscheid): Weiss gehoert
+            # exklusiv den Event-Blindern + Drop — die Per-Kick-Funken sind
+            # Bernstein wie die Glut-Blobs der Seite. Nebeneffekt: nochmal
+            # weniger Spitzenstrom als das alte Warmweiss.
+            w = Color(int(255 * scale), int(176 * scale), int(64 * scale))
             # ~8% of strip (was ~12 LEDs); cap so crimson base stays visible
             k = min(n, min(80, max(24 if n >= 48 else 3, n // 12)))
             k = min(k, max(1, (n * 2) // 5))  # ≤40% white
@@ -1286,6 +1333,37 @@ def warn_kick_evt():
         q = controller.effect_params.setdefault('iris_kicks', [])
         if len(q) < 8:
             q.append({'s': strength, 'bpm': bpm})
+        controller.wake_effect()
+    return jsonify({'status': 'ok'})
+
+
+@app.route('/api/warn_event', methods=['POST'])
+def warn_event_evt():
+    """Weiss-Event von disco (double/roll/accent) — EIN POST pro Event.
+
+    Weiss ist Interpunktion: der Vollflaechen-Blinder feuert nur noch auf
+    erkannte Rhythmus-Events (Paritaet zur dB-Analyse-Seite). Zugleich der
+    Dev-Hook zum Handzuenden:
+      curl -X POST :5006/api/warn_event -H 'Content-Type: application/json' \
+           -d '{"kind": "double", "gap_ms": 180}'
+    Ausserhalb von iris_warn ein stiller No-op (disco bleibt dumm); die
+    Queue-Kappe verwirft Bursts statt veralteter Blinder."""
+    data = request.get_json() or {}
+    kind = str(data.get('kind') or '')
+    if kind not in ('double', 'roll', 'accent'):
+        return jsonify({'status': 'ignored'})
+    try:
+        gap = max(0.06, min(0.40, float(data.get('gap_ms', 160)) / 1000.0))
+    except (TypeError, ValueError):
+        gap = 0.16
+    try:
+        n = max(2, min(6, int(data.get('n', 2))))
+    except (TypeError, ValueError):
+        n = 2
+    if controller.current_effect == 'iris_warn':
+        evq = controller.effect_params.setdefault('iris_events', [])
+        if len(evq) < 4:
+            evq.append({'kind': kind, 'gap': gap, 'n': n})
         controller.wake_effect()
     return jsonify({'status': 'ok'})
 

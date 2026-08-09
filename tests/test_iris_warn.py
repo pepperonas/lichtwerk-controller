@@ -259,14 +259,16 @@ def test_free_run_fallback_keeps_the_tagged_period():
         assert iris_phase(t) == _sim_lit([], t), f"free-run diverged at t={t}"
 
 
-def test_shockwave_replaces_toward_warm_white():
-    """Conservative current budget: the front REPLACE-blends crimson toward a
-    warm white — additive blending would stack current on top of full crimson,
-    and 600 LEDs of full white would be ~36 A."""
+def test_shockwave_replaces_toward_ember_gold():
+    """Conservative current budget: the front REPLACE-blends crimson toward the
+    head colour — additive blending would stack current on top of full crimson,
+    and 600 LEDs of full white would be ~36 A.
+
+    2026-08-09 (Nutzerentscheid "Glut statt Weiss"): der Kern ist GOLD-BERNSTEIN
+    (255,190,96), nicht mehr Warmweiss — Weiss gehoert exklusiv den
+    Event-Blindern + Drop (Interpunktions-Prinzip der dB-Analyse-Seite)."""
     src = _src()
-    # 2026-08-06: zweizoniger Kopf — weisser Kern (255,232,214) in heissrotem
-    # Halo (255,110,80); der alte Einzel-Blend las auf halber Strecke als Rosa.
-    assert "255, 232, 214" in src, "core must stay warm white (red/white scheme)"
+    assert "255, 190, 96" in src, "core must be ember gold — white belongs to the blinders"
     assert "255, 110, 80" in src, "halo must stay hot red"
     # Replace-Blend in beiden Zonen: Halo mischt zur Zielfarbe, der Kern
     # mischt vom Halo-Ergebnis weiter Richtung Weiss — nie additiv aufs Rot.
@@ -375,9 +377,85 @@ def test_one_write_clock_for_all_paths():
     assert "< 0.02:" in src
 
 
-def test_sparks_are_warm_white_not_full_white():
+def test_sparks_are_ember_not_white():
+    """2026-08-09 (Nutzerentscheid): Per-Kick-Funken sind BERNSTEIN — Weiss ist
+    Interpunktion und gehoert exklusiv den Event-Blindern + Drop. Nebeneffekt:
+    weniger Spitzenstrom als das alte Warmweiss."""
     src = _src()
     blitz = src[src.index("if spark and n > 0:"):]
     blitz = blitz[:blitz.index("self.strip.show()")]
-    assert "int(224 * scale)" in blitz and "int(205 * scale)" in blitz, \
-        "full white spikes the rail; warm white is the honest highlight"
+    assert "int(176 * scale)" in blitz and "int(64 * scale)" in blitz, \
+        "sparks must be ember amber; white belongs to the blinders"
+    assert "int(224 * scale)" not in blitz, "the old warm-white spark must not return"
+
+
+# ---- Blinder-Scheduler (2026-08-09): Weiss nur auf Events ------------------
+
+def blinder_state(win, bt):
+    """Mirror of the scheduler evaluation in effect_iris_warn: None = Plan
+    abgelaufen, sonst (an, gain); zwischen den Fenstern erzwungen dunkel."""
+    if bt >= win[-1][1]:
+        return None
+    for a, b, g in win:
+        if a <= bt < b:
+            return (True, g)
+    return (False, 0.0)
+
+
+def double_win(gap):
+    return ((0.0, 0.07, 1.0), (gap, gap + 0.07, 0.85))
+
+
+def roll_win(gap, n):
+    return tuple((i * gap, i * gap + 0.055, max(0.5, 1.0 - i * 0.14)) for i in range(n))
+
+
+DROP_WIN = ((0.0, 0.07, 1.0), (0.13, 0.22, 1.0), (0.30, 0.40, 0.7))
+
+
+def test_double_blinder_mirrors_the_measured_gap():
+    """Peak — dunkel — Peak, exakt im gemessenen Kick-Abstand; zweiter Puls
+    gedimmt (dieselbe Kurve, die auf der Seite per Opacity-Sampling gemessen
+    wurde)."""
+    win = double_win(0.18)
+    assert blinder_state(win, 0.03) == (True, 1.0)
+    assert blinder_state(win, 0.12) == (False, 0.0)      # harte Dunkelphase
+    assert blinder_state(win, 0.20) == (True, 0.85)      # zweiter Puls, gedimmt
+    assert blinder_state(win, 0.30) is None              # Plan abgelaufen
+
+
+def test_roll_train_decays_but_never_below_half():
+    win = roll_win(0.15, 5)
+    gains = [g for _, _, g in win]
+    assert gains == sorted(gains, reverse=True), "roll must decay"
+    assert gains[0] == 1.0 and gains[-1] == 0.5
+    assert all(g >= 0.5 for g in gains)
+    # Pulse getrennt durch Dunkelphasen (gap 0.15 > Pulsdauer 0.055)
+    assert blinder_state(win, 0.10) == (False, 0.0)
+    assert blinder_state(win, 0.16) == (True, gains[1])
+
+
+def test_drop_preset_is_the_tagged_triple_blinder():
+    """Der Drop nutzt denselben Scheduler — als Preset mit exakt der alten
+    Choreografie (0/0.07, 0.13/0.22, 0.30/0.40 @ 1.0/1.0/0.7)."""
+    src = _src()
+    assert "((0.0, 0.07, 1.0), (0.13, 0.22, 1.0), (0.30, 0.40, 0.7))" in src
+    assert blinder_state(DROP_WIN, 0.05) == (True, 1.0)
+    assert blinder_state(DROP_WIN, 0.10) == (False, 0.0)
+    assert blinder_state(DROP_WIN, 0.35) == (True, 0.7)
+    assert blinder_state(DROP_WIN, 0.45) is None
+
+
+def test_warn_event_route_and_intake_contracts():
+    """Event-Weiss: Route validiert kind/gap/n, Queue gekappt, laufender Plan
+    gewinnt (Events verderblich), alter iris_drop_t0-Pfad vollstaendig ersetzt."""
+    src = _src()
+    assert "@app.route('/api/warn_event', methods=['POST'])" in src
+    assert "('double', 'roll', 'accent')" in src, "kind whitelist"
+    assert "max(0.06, min(0.40, float(data.get('gap_ms', 160)) / 1000.0))" in src
+    assert "if len(evq) < 4:" in src, "queue cap sheds bursts"
+    assert "if self.effect_params.get('iris_blinder') is not None:" in src, \
+        "a running plan (esp. the drop) must win over a late event"
+    assert "iris_drop_t0" not in src, "the old drop-only path must be fully replaced"
+    # Blinder bleibt in der erprobten 55-%-Stromklasse
+    assert "scale * 0.55 * blinder[1]" in src
