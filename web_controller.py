@@ -1023,6 +1023,7 @@ class LichtwerkWebController:
                     blinder = (False, 0.0)
             else:
                 self.effect_params['iris_blinder'] = None
+        blind_on = blinder is not None and blinder[0]
 
         # ── Engage: two hard pulses (Aufleuchten) ──
         # ON 70ms · OFF 60ms · ON 80ms, then sustain
@@ -1112,7 +1113,6 @@ class LichtwerkWebController:
             self.clear(force=True)
             return
 
-        blind_on = blinder is not None and blinder[0]
         if blind_on:
             # Event-Charakter (2026-08-09): der Blinder zuendet in seiner
             # festen, validierten 55-%-Stromklasse — UNABHAENGIG von beiden
