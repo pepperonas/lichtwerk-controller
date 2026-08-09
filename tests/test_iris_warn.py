@@ -459,3 +459,17 @@ def test_warn_event_route_and_intake_contracts():
     assert "iris_drop_t0" not in src, "the old drop-only path must be fully replaced"
     # Blinder bleibt in der erprobten 55-%-Stromklasse
     assert "scale * 0.55 * blinder[1]" in src
+
+
+def test_blinder_frames_are_resent_continuously():
+    """Feldbefund 2026-08-09: gruenliche Artefakte statt weissem Blitzen.
+    Ein Blinder-Puls war EINE einzige Transmission — ein GRB-Bit-Slip darin
+    stand die volle Pulsdauer. Bei aktivem Plan wird jetzt im 20-ms-Takt neu
+    gesendet (Dunkelfenster ueber das doppelt schreibende clear()); Slips
+    sind per-Transmission und heilen so, bevor das Auge sie liest."""
+    src = _src()
+    i = src.index("elif self.effect_params.get('iris_blinder') is not None:")
+    j = src.index("elif last is lit and last_spark is spark:", i)
+    branch = src[i:j]
+    assert "pass" in branch, "the blinder branch must fall through to the write clock"
+    assert "return" not in branch, "no early-return while a blinder plan is active"

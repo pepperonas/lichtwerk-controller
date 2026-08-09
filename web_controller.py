@@ -1055,6 +1055,19 @@ class LichtwerkWebController:
                     and last is lit and last_spark is spark:
                 return
             self.effect_params['iris_next_paint'] = now_m + 0.02
+        elif self.effect_params.get('iris_blinder') is not None:
+            # Blinder-Plan aktiv: KONTINUIERLICH neu senden — der 20-ms-
+            # Schreibtakt unten paced (Dunkelfenster laufen ueber clear(),
+            # das ohnehin doppelt schreibt). Ein Blinder-Puls war sonst EINE
+            # einzige Transmission (Flanken-Optimierung + 80-ms-Heartbeat
+            # greifen erst im Haltefenster), und ein GRB-Bit-Slip in genau
+            # dieser Uebertragung stand die volle Pulsdauer als GRUEN-Artefakt
+            # ("statt weissem Blitzen gruenlich", Feldbefund 2026-08-09 —
+            # der Vollflaechen-Wechsel ist die haerteste Stromtransiente, und
+            # die Y-Kette verschaerft die marginale 3,3-V-Leitung). Slips sind
+            # per-Transmission, nicht klebrig: der 20-ms-Refresh heilt sie,
+            # bevor das Auge sie als Farbe liest.
+            pass
         elif last is lit and last_spark is spark:
             # Heartbeat statt reiner Flanken-Optimierung (2026-08-06): ein
             # GRB-Bit-Slip (verrutschtes Rot = GRUEN) im zuletzt gesendeten
