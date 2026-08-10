@@ -268,7 +268,7 @@ def test_shockwave_replaces_toward_ember_gold():
     (255,190,96), nicht mehr Warmweiss — Weiss gehoert exklusiv den
     Event-Blindern + Drop (Interpunktions-Prinzip der dB-Analyse-Seite)."""
     src = _src()
-    assert "255, 135, 60" in src, "core must be green-die-compensated ember gold"
+    assert "255, 105, 25" in src, "wave core deep orange — bin-spread-proof"
     assert "255, 110, 80" in src, "halo must stay hot red"
     # Replace-Blend in beiden Zonen: Halo mischt zur Zielfarbe, der Kern
     # mischt vom Halo-Ergebnis weiter Richtung Weiss — nie additiv aufs Rot.
@@ -385,8 +385,8 @@ def test_sparks_are_ember_not_white():
     src = _src()
     blitz = src[src.index("if spark and n > 0 and not blind_on:"):]
     blitz = blitz[:blitz.index("self.strip.show()")]
-    assert "int(120 * scale)" in blitz and "int(30 * scale)" in blitz, \
-        "sparks must be green-die-compensated amber; white belongs to the blinders"
+    assert "int(90 * scale)" in blitz and "), 0)" in blitz, \
+        "sparks are deep orange, zero blue — bin spread at tiny duties tinted them"
     assert "int(224 * scale)" not in blitz, "the old warm-white spark must not return"
 
 
@@ -499,6 +499,6 @@ def test_blinder_is_tungsten_not_neutral_white():
     binning-fest, stromguenstig — volle Dichte, Gain 0.55. Neutralweiss erst
     nach beidseitiger Stromeinspeisung wieder erwaegen."""
     src = _src()
-    assert "Color(int(255 * bg), int(150 * bg), int(45 * bg))" in src
+    assert "Color(int(255 * bg), int(138 * bg), int(18 * bg))" in src
     assert "bg = 0.55 * blinder[1]" in src
     assert "wp[0] * bg" not in src and "int(232 * bg)" not in src

@@ -1144,7 +1144,7 @@ class LichtwerkWebController:
             # hinten nicht wegsacken, und Blau-Binning streut am staerksten. Ist
             # zudem stromguenstig -> Gain zurueck auf 0.55 und VOLLE Dichte.
             # Echtes Kaltweiss braucht beidseitige Stromeinspeisung (Hardware).
-            c = Color(int(255 * bg), int(150 * bg), int(45 * bg))
+            c = Color(int(255 * bg), int(138 * bg), int(18 * bg))
         else:
             c = Color(int(hr * scale), int(hg * scale), int(hb * scale))
         dark = Color(0, 0, 0)
@@ -1168,7 +1168,7 @@ class LichtwerkWebController:
             # Gruen-Die-kompensiert (2026-08-10): G/B deutlich unter dem naiven
             # Gold, sonst kippt der Kern nach der Kernel-Gamma ins Gelbgruene
             # (gruene Die ~2x Luminanz je Duty — iris_wash.WHITE_POINT-Physik).
-            wr, wg, wb = 255, 135, 60    # ember-gold core — never green-ish
+            wr, wg, wb = 255, 105, 25    # ember core, tief orange — bin-streuungsfest
             xr, xg, xb = 255, 110, 80    # hot red halo
             centre = n / 2.0
             half = centre
@@ -1209,7 +1209,10 @@ class LichtwerkWebController:
             # weniger Spitzenstrom als das alte Warmweiss.
             # Gruen-Die-kompensiert (2026-08-10): 176er-G las sich nach der
             # Kernel-Gamma als Gelbgruen — 120/30 haelt die Funken klar orange.
-            w = Color(int(255 * scale), int(120 * scale), int(30 * scale))
+            # Feinschliff 2026-08-10: bei den LUT-bedingten Mini-Duties (G~6)
+            # kippten bin-streuende Einzel-LEDs ins Gelbgruene — G weiter runter,
+            # B ganz raus (unterhalb 1 Duty-Schritt = reine Rauschquelle).
+            w = Color(int(255 * scale), int(90 * scale), 0)
             # ~8% of strip (was ~12 LEDs); cap so crimson base stays visible
             k = min(n, min(80, max(24 if n >= 48 else 3, n // 12)))
             k = min(k, max(1, (n * 2) // 5))  # ≤40% white
