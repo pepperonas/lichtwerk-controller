@@ -268,7 +268,7 @@ def test_shockwave_replaces_toward_ember_gold():
     (255,190,96), nicht mehr Warmweiss — Weiss gehoert exklusiv den
     Event-Blindern + Drop (Interpunktions-Prinzip der dB-Analyse-Seite)."""
     src = _src()
-    assert "255, 190, 96" in src, "core must be ember gold — white belongs to the blinders"
+    assert "255, 135, 60" in src, "core must be green-die-compensated ember gold"
     assert "255, 110, 80" in src, "halo must stay hot red"
     # Replace-Blend in beiden Zonen: Halo mischt zur Zielfarbe, der Kern
     # mischt vom Halo-Ergebnis weiter Richtung Weiss — nie additiv aufs Rot.
@@ -385,8 +385,8 @@ def test_sparks_are_ember_not_white():
     src = _src()
     blitz = src[src.index("if spark and n > 0 and not blind_on:"):]
     blitz = blitz[:blitz.index("self.strip.show()")]
-    assert "int(176 * scale)" in blitz and "int(64 * scale)" in blitz, \
-        "sparks must be ember amber; white belongs to the blinders"
+    assert "int(120 * scale)" in blitz and "int(30 * scale)" in blitz, \
+        "sparks must be green-die-compensated amber; white belongs to the blinders"
     assert "int(224 * scale)" not in blitz, "the old warm-white spark must not return"
 
 
@@ -487,3 +487,15 @@ def test_blinder_uses_half_density_mask():
     Vollflaechen-Blitz. Die Transiente war es, die die Bits kippte."""
     src = _src()
     assert "c if (i & 1) == 0 else dark" in src
+
+
+def test_blinder_uses_the_calibrated_white_point():
+    """2026-08-10: naives RGB-Weiss liest sich auf WS2812B GRUEN (gruene Die
+    ~2x Luminanz je Duty-Schritt; die Kernel-Gamma verschiebt die Ratios
+    weiter). Der Blinder nutzt deshalb die kalibrierte, config-ueberschreibbare
+    Weiss-Referenz des Wash (iris_wash.WHITE_POINT via _wash_white_point) —
+    NIE wieder hartcodierte Gleich-Kanal-Weisstoene im Blinder."""
+    src = _src()
+    assert "wp = self._wash_white_point" in src
+    assert "Color(int(wp[0] * bg), int(wp[1] * bg), int(wp[2] * bg))" in src
+    assert "int(232 * bg)" not in src and "int(214 * bg)" not in src

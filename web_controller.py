@@ -1132,7 +1132,14 @@ class LichtwerkWebController:
             # Halbdichte-Maske (jede 2. LED) — zusammen ~1/4 der Transiente,
             # optisch weiter ein Vollflaechen-Blitz.
             bg = 0.45 * blinder[1]
-            c = Color(int(255 * bg), int(232 * bg), int(214 * bg))
+            # KALIBRIERTES Weiss statt naivem (255,232,214): auf WS2812B leuchtet
+            # die gruene Die ~2x pro Duty-Schritt (iris_wash.WHITE_POINT-Herleitung)
+            # — gleiche Kanaele lesen sich GRUEN, und die Kernel-Gamma verschiebt
+            # die Ratios weiter Richtung Gruen (Feldbefund 2026-08-10: 'die LEDs,
+            # die weiss sein sollen, sind gruen'). Der Weisspunkt ist per
+            # config.json iris_wash.white_point strip-spezifisch justierbar.
+            wp = self._wash_white_point
+            c = Color(int(wp[0] * bg), int(wp[1] * bg), int(wp[2] * bg))
         else:
             c = Color(int(hr * scale), int(hg * scale), int(hb * scale))
         dark = Color(0, 0, 0)
@@ -1158,7 +1165,10 @@ class LichtwerkWebController:
             # Replace-Blend bleibt: Strombudget ≈ Vollrot.
             # Glut statt Weiss (2026-08-09): Gold-Bernstein-Kern im heissroten
             # Halo — Weiss gehoert exklusiv den Event-Blindern + Drop.
-            wr, wg, wb = 255, 190, 96    # ember-gold core — never blue-ish
+            # Gruen-Die-kompensiert (2026-08-10): G/B deutlich unter dem naiven
+            # Gold, sonst kippt der Kern nach der Kernel-Gamma ins Gelbgruene
+            # (gruene Die ~2x Luminanz je Duty — iris_wash.WHITE_POINT-Physik).
+            wr, wg, wb = 255, 135, 60    # ember-gold core — never green-ish
             xr, xg, xb = 255, 110, 80    # hot red halo
             centre = n / 2.0
             half = centre
@@ -1197,7 +1207,9 @@ class LichtwerkWebController:
             # exklusiv den Event-Blindern + Drop — die Per-Kick-Funken sind
             # Bernstein wie die Glut-Blobs der Seite. Nebeneffekt: nochmal
             # weniger Spitzenstrom als das alte Warmweiss.
-            w = Color(int(255 * scale), int(176 * scale), int(64 * scale))
+            # Gruen-Die-kompensiert (2026-08-10): 176er-G las sich nach der
+            # Kernel-Gamma als Gelbgruen — 120/30 haelt die Funken klar orange.
+            w = Color(int(255 * scale), int(120 * scale), int(30 * scale))
             # ~8% of strip (was ~12 LEDs); cap so crimson base stays visible
             k = min(n, min(80, max(24 if n >= 48 else 3, n // 12)))
             k = min(k, max(1, (n * 2) // 5))  # ≤40% white
