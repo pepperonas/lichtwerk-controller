@@ -365,8 +365,8 @@ def test_strip_drop_blinder_mirrors_the_page_bomb():
     assert "if ks >= 0.9 and avg >= 0.5" in src
     assert "> 8.0" in src
     assert "(0.0, 0.07, 1.0), (0.13, 0.22, 1.0), (0.30, 0.40, 0.7)" in src
-    assert "bg = 0.55 * blinder[1]" in src, \
-        "blinder current class is set by POST-gamma duty — 0.45 + half-density mask"
+    assert "'spots': (sp, sp, sp)" in src, \
+        "drop slams the SAME sparkle spots three times — the triple echo"
 
 
 def test_one_write_clock_for_all_paths():
@@ -458,10 +458,10 @@ def test_warn_event_route_and_intake_contracts():
     assert "if self.effect_params.get('iris_blinder') is not None:" in src, \
         "a running plan (esp. the drop) must win over a late event"
     assert "iris_drop_t0" not in src, "the old drop-only path must be fully replaced"
-    # Blinder bleibt in der erprobten 55-%-Stromklasse — aber ABSOLUT:
-    # unabhaengig von controller.brightness UND der Strip-LUT (Feldbefund
-    # 2026-08-09: LUT 100/255 + Kernel-Gamma = unsichtbarer gruener Murks).
-    assert "bg = 0.55 * blinder[1]" in src
+    # Event-Weiss bleibt ABSOLUT (unabhaengig von controller.brightness und
+    # Strip-LUT — Feldbefund 2026-08-09: LUT+Kernel-Gamma = unsichtbarer
+    # Murks); seit 2026-08-10 als Sparse-Sparkle mit festem Gain.
+    assert "0.85 * blinder[1]" in src
     assert "scale * 0.55" not in src and "scale * 0.45" not in src, "the blinder must not scale with the mood dimmer"
     assert "want = 255 if blind_on else" in src, "blinder frames must neutralise the strip LUT"
     assert "if spark and n > 0 and not blind_on:" in src, "no sparks into a blinder frame"
@@ -489,16 +489,19 @@ def test_blinder_paints_full_density_again():
     assert "c if (i & 1) == 0 else dark" not in src
 
 
-def test_blinder_is_tungsten_not_neutral_white():
-    """2026-08-10 (Geraete-A/B-Tests): Vollweiss driftet auf dieser Verkabelung
-    binnen Sekunden gruenlich — Einspeisung nur vorn, die 5-V-Schiene sackt
-    ueber 10 m, die blaue Die (hoechste Flussspannung) stirbt zuerst; dazu
-    rendern die zwei 5-m-Segmente je Kette Weiss sichtbar verschieden
-    (Binning). Neutrales Weiss ist auf dieser Verkabelung nicht ehrlich
-    darstellbar. Der Blinder ist deshalb TUNGSTEN (fast ohne Blau): driftfest,
-    binning-fest, stromguenstig — volle Dichte, Gain 0.55. Neutralweiss erst
-    nach beidseitiger Stromeinspeisung wieder erwaegen."""
+def test_event_white_is_sparse_sparkle_on_black():
+    """Nutzerentscheid 2026-08-10 (nach der kompletten Gruen-Detektivarbeit):
+    Event-Weiss ist KEIN Vollflaechen-Flutlicht — waehrend eines Pulses geht
+    das Rot AUS und wenige zufaellige Cluster blitzen hell. Sparse ist das,
+    was diese Verkabelung ehrlich kann (winzige Last -> keine Drift, hohe
+    Duty -> Binning ertrinkt); der Schwarz-Kontrast macht den Blitz. Doppel =
+    zweimal DIESELBEN Stellen (Echo), Rolle = wandernde Stellen."""
     src = _src()
-    assert "Color(int(255 * bg), int(138 * bg), int(18 * bg))" in src
-    assert "bg = 0.55 * blinder[1]" in src
-    assert "wp[0] * bg" not in src and "int(232 * bg)" not in src
+    assert "def _sparkle_spots(count):" in src
+    assert "base = dark if blind_on else (c if lit else dark)" in src
+    assert "spots = (sp, sp)" in src, "double must reuse the SAME spots — the echo"
+    assert "tuple(_sparkle_spots(9) for _ in win)" in src, "roll spots must wander"
+    assert "Color(int(255 * v), int(205 * v), int(150 * v))" in src, \
+        "sparse clusters may run near-true warm white — tiny load, high duty"
+    assert "int(138 * bg)" not in src and "bg = 0.55" not in src, \
+        "the full-surface tungsten flood must be gone"

@@ -868,6 +868,21 @@ class LichtwerkWebController:
             return
         import random
         import time as _time
+
+        def _sparkle_spots(count):
+            # Cluster-Positionen fuer den Sparkle-Blinder: `count` Zentren,
+            # 1-3 LEDs breit, individuelle Helligkeit — der Glitzer-Look.
+            npx = self.strip.numPixels()
+            spots = []
+            for _ in range(count):
+                centre = random.randrange(npx)
+                width = random.choice((1, 2, 2, 3))
+                bri = 0.6 + random.random() * 0.4
+                for off in range(-(width // 2), (width - 1) // 2 + 1):
+                    j = centre + off
+                    if 0 <= j < npx:
+                        spots.append((j, bri))
+            return tuple(spots)
         t0 = self.effect_params.get('iris_t0')
         if t0 is None:
             t0 = _time.monotonic()
@@ -944,9 +959,11 @@ class LichtwerkWebController:
                     and t - self.effect_params.get('iris_drop_at', -1e9) > 8.0:
                 self.effect_params['iris_drop_at'] = t
                 # Drop = Preset desselben Blinder-Schedulers wie die Events.
+                sp = _sparkle_spots(24)
                 self.effect_params['iris_blinder'] = {
                     't0': t,
-                    'win': ((0.0, 0.07, 1.0), (0.13, 0.22, 1.0), (0.30, 0.40, 0.7))}
+                    'win': ((0.0, 0.07, 1.0), (0.13, 0.22, 1.0), (0.30, 0.40, 0.7)),
+                    'spots': (sp, sp, sp)}
             waves = self.effect_params['iris_waves']
             waves.append({'born': t, 's': ks})
             if len(waves) > 3:
@@ -971,15 +988,21 @@ class LichtwerkWebController:
             kind = ev.get('kind')
             if kind == 'double':
                 # Zwei Schlaege im ECHT gemessenen Kick-Abstand — das Licht
-                # echot den Rhythmus (das Signaturdetail der Seite).
+                # echot den Rhythmus. ZWEIMAL DIESELBEN Stellen: das Echo.
                 win = ((0.0, 0.07, 1.0), (g, g + 0.07, 0.85))
+                sp = _sparkle_spots(12)
+                spots = (sp, sp)
             elif kind == 'roll':
-                # Stakkato im Roll-Tempo, abklingend — nie unter halbe Kraft.
+                # Stakkato im Roll-Tempo, abklingend — je Puls NEUE Stellen
+                # (wandernder Glitzer), nie unter halbe Kraft.
                 win = tuple((i * g, i * g + 0.055, max(0.5, 1.0 - i * 0.14))
                             for i in range(m))
+                spots = tuple(_sparkle_spots(9) for _ in win)
             else:
-                win = ((0.0, 0.09, 1.0),)   # accent: der klassische Einzelschlag
-            self.effect_params['iris_blinder'] = {'t0': t, 'win': win}
+                win = ((0.0, 0.09, 1.0),)   # accent: ein einzelner Einschlag
+                spots = (_sparkle_spots(14),)
+            self.effect_params['iris_blinder'] = {'t0': t, 'win': win,
+                                                  'spots': spots}
 
         # Tempo lock: the square's period IS the measured beat interval, so ON
         # 65 % / DARK 35 % hold for every REAL beat at any tempo. The original
@@ -1012,12 +1035,14 @@ class LichtwerkWebController:
         # per Opacity-Sampling gemessen wurde: Peak, dunkel, Peak).
         bl = self.effect_params.get('iris_blinder')
         blinder = None   # None = normal; sonst (an: bool, gain: float)
+        blinder_wi = 0   # Index des aktiven Fensters -> dessen Spot-Liste
         if bl is not None:
             bl_t = t - bl['t0']
             if bl_t < bl['win'][-1][1]:
-                for a, b_, g_ in bl['win']:
+                for wi, (a, b_, g_) in enumerate(bl['win']):
                     if a <= bl_t < b_:
                         blinder = (True, g_)
+                        blinder_wi = wi
                         break
                 else:
                     blinder = (False, 0.0)
@@ -1113,42 +1138,20 @@ class LichtwerkWebController:
             self.clear(force=True)
             return
 
-        if blind_on:
-            # Event-Charakter (2026-08-09): der Blinder zuendet in seiner
-            # festen, validierten 55-%-Stromklasse — UNABHAENGIG von beiden
-            # Dimm-Schichten. Feldbefund: die Strip-LUT (led_brightness=100)
-            # plus Kernel-Gamma (ws2812-pio-rp1, hart codiert) quetschten das
-            # skalierte Warmweiss auf ~(8,7,6) — 'weiss strahlt keine LED
-            # mehr', uebrig blieb gruenlicher Murks. Fast-gleiche niedrige
-            # Kanaele sterben in der Gamma; ein dominanter Kanal wie das Rot
-            # ueberlebt sie. Die LUT wird unten pro Frame neutralisiert.
-            # Strom-Realitaet (2026-08-09, Feldbefund Runde 2): die LED-Last
-            # bestimmt der POST-GAMMA-Wert, nicht das Payload — das bewaehrte
-            # Rot lief real bei ~2,7 mA/LED (Payload 100 -> Gamma-Duty 32).
-            # Volles Warmweiss-Payload (140) -> Duty 68 zieht ~10x mehr, und
-            # dieser Sprung auf 1200 LEDs drueckt die 5-V-Schiene: genau dann
-            # kippen Bits auf der marginalen 3,3-V-Y-Leitung (gruene
-            # Artefakte ZU den Blitzen). Deshalb Gain 0.45 + unten die
-            # Halbdichte-Maske (jede 2. LED) — zusammen ~1/4 der Transiente,
-            # optisch weiter ein Vollflaechen-Blitz.
-            bg = 0.55 * blinder[1]
-            # TUNGSTEN-Blinder (2026-08-10, Endergebnis der Gruen-Detektivarbeit):
-            # Die A/B-Tests am Geraet haben die Wahrheit zerlegt — (a) schnelles
-            # Neusenden von Rot ist SAUBER (Datenleitung unschuldig), (b) stehendes
-            # Vollweiss startet weiss und driftet binnen Sekunden gruenlich, hinten
-            # zuerst (Einspeisung nur vorn: die Schiene sackt ueber 10 m, die BLAUE
-            # Die stirbt als erste -> Weiss minus Blau = gelbgruen), (c) die zwei
-            # 5-m-Segmente je Kette rendern Weiss sichtbar verschieden (Binning).
-            # Neutrales Weiss ist auf dieser Verkabelung NICHT ehrlich darstellbar.
-            # Deshalb warmes Blitzlicht fast ohne Blau: was nicht da ist, kann
-            # hinten nicht wegsacken, und Blau-Binning streut am staerksten. Ist
-            # zudem stromguenstig -> Gain zurueck auf 0.55 und VOLLE Dichte.
-            # Echtes Kaltweiss braucht beidseitige Stromeinspeisung (Hardware).
-            c = Color(int(255 * bg), int(138 * bg), int(18 * bg))
-        else:
-            c = Color(int(hr * scale), int(hg * scale), int(hb * scale))
+        c = Color(int(hr * scale), int(hg * scale), int(hb * scale))
         dark = Color(0, 0, 0)
-        base = c if lit else dark
+        # SPARKLE-Blinder (Nutzerentscheid 2026-08-10, ersetzt das
+        # Vollflaechen-Flutlicht): waehrend eines Event-Pulses geht das ROT AUS
+        # und an wenigen zufaelligen Stellen blitzen helle Funken-Cluster.
+        # Vorgeschichte in den Geraete-A/B-Tests: (a) schnelles Rot-Neusenden
+        # sauber (Datenleitung unschuldig), (b) stehendes Vollweiss driftet
+        # gruenlich, hinten zuerst (Einspeisung nur vorn, Blau-Die stirbt
+        # zuerst), (c) die 5-m-Segmente rendern Weiss verschieden (Binning).
+        # Sparse kann diese Verkabelung dagegen ehrlich: wenige LEDs = winzige
+        # Last -> keine Drift, hohe Duty -> Binning ertrinkt, fast echtes
+        # Warmweiss; der Schwarz-Kontrast macht den Blitz. Vollflaechen-
+        # Kaltweiss braucht beidseitige Stromeinspeisung (Hardware).
+        base = dark if blind_on else (c if lit else dark)
         if hasattr(self.strip, 'fill') and not waves:
             self.strip.fill(base)
         else:
@@ -1222,6 +1225,14 @@ class LichtwerkWebController:
             rng = random.Random(int(t0 * 1000) ^ int(t * 200))
             for i in rng.sample(range(n), k):
                 self.strip.setPixelColor(i, w)
+        if blind_on:
+            # Sparse -> hell: nahe Warmweiss ist hier erlaubt (winzige
+            # Gesamtlast); die LUT ist im Blinder-Fenster neutralisiert.
+            spots = bl.get('spots') or ((),)
+            gv = 0.85 * blinder[1]
+            for j, bri in spots[min(blinder_wi, len(spots) - 1)]:
+                v = gv * bri
+                self.strip.setPixelColor(j, Color(int(255 * v), int(205 * v), int(150 * v)))
         self.strip.show()
         self._cleared = False
 
