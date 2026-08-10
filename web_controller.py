@@ -1001,6 +1001,8 @@ class LichtwerkWebController:
             else:
                 win = ((0.0, 0.16, 1.0),)   # accent: ein einzelner Einschlag
                 spots = (_sparkle_spots(26),)
+            print(f"warn_event angenommen: {kind} pulse={len(win)} "
+                  f"leds={sum(len(x) for x in spots)}", flush=True)
             self.effect_params['iris_blinder'] = {'t0': t, 'win': win,
                                                   'spots': spots}
 
@@ -1034,21 +1036,30 @@ class LichtwerkWebController:
         # Peaks ist die Blinder-Signatur (dieselbe Kurve, die auf der Seite
         # per Opacity-Sampling gemessen wurde: Peak, dunkel, Peak).
         bl = self.effect_params.get('iris_blinder')
-        blinder = None   # None = normal; sonst (an: bool, gain: float)
-        blinder_wi = 0   # Index des aktiven Fensters -> dessen Spot-Liste
+        blinder = None    # None = kein Plan; sonst (an: bool, gain: float)
+        blinder_wi = 0    # Index des aktiven Fensters -> dessen Spot-Liste
+        blinder_decay = None   # (fenster_index, faktor 0..1) im Nachglimmen
+        BL_DECAY_S = 0.28      # Funken reissen nicht ab, sie verglimmen
         if bl is not None:
             bl_t = t - bl['t0']
-            if bl_t < bl['win'][-1][1]:
+            if bl_t < bl['win'][-1][1] + BL_DECAY_S:
+                blinder = (False, 0.0)
                 for wi, (a, b_, g_) in enumerate(bl['win']):
                     if a <= bl_t < b_:
                         blinder = (True, g_)
                         blinder_wi = wi
                         break
-                else:
-                    blinder = (False, 0.0)
+                if not blinder[0]:
+                    # Nachglimmen des juengsten vergangenen Pulses
+                    for wi in range(len(bl['win']) - 1, -1, -1):
+                        a, b_, g_ = bl['win'][wi]
+                        if bl_t >= b_ and bl_t - b_ < BL_DECAY_S:
+                            f = 1.0 - (bl_t - b_) / BL_DECAY_S
+                            blinder_decay = (wi, g_ * f * f)
+                            break
             else:
                 self.effect_params['iris_blinder'] = None
-        blind_on = blinder is not None and blinder[0]
+        blind_on = blinder is not None   # Plan aktiv (inkl. Pausen + Glimmen)
 
         # ── Engage: two hard pulses (Aufleuchten) ──
         # ON 70ms · OFF 60ms · ON 80ms, then sustain
@@ -1130,7 +1141,7 @@ class LichtwerkWebController:
             if self.strip.getBrightness() != want:
                 self.strip.setBrightness(want)
 
-        if not lit and not waves:
+        if not lit and not waves and not blind_on:
             # force: auf Flanken ist _cleared ohnehin False (identisch), aber
             # der Heartbeat muss auch SCHWARZ neu beweisen koennen — ein heller
             # Slip stand sonst das ganze Dunkelfenster (der _cleared-Guard
@@ -1227,12 +1238,24 @@ class LichtwerkWebController:
                 self.strip.setPixelColor(i, w)
         if blind_on:
             # Sparse -> hell: nahe Warmweiss ist hier erlaubt (winzige
-            # Gesamtlast); die LUT ist im Blinder-Fenster neutralisiert.
+            # Gesamtlast); die LUT ist im ganzen Plan neutralisiert. Aktives
+            # Fenster malt voll, danach verglimmt der Puls (quadratischer
+            # Abfall ueber BL_DECAY_S) — Funken sterben, sie schalten nicht.
             spots = bl.get('spots') or ((),)
-            gv = 1.0 * blinder[1]   # sparse -> voll aufdrehen
-            for j, bri in spots[min(blinder_wi, len(spots) - 1)]:
-                v = gv * bri
-                self.strip.setPixelColor(j, Color(int(255 * v), int(205 * v), int(150 * v)))
+            if blinder[0]:
+                wi, gv = blinder_wi, 1.0 * blinder[1]
+            elif blinder_decay is not None:
+                wi, gv = blinder_decay
+            else:
+                wi, gv = 0, 0.0
+            if gv > 0.01:
+                if not bl.get('dbg'):
+                    bl['dbg'] = True
+                    print(f"sparkle-frame gemalt: fenster={wi} "
+                          f"leds={len(spots[min(wi, len(spots) - 1)])}", flush=True)
+                for j, bri in spots[min(wi, len(spots) - 1)]:
+                    v = gv * bri
+                    self.strip.setPixelColor(j, Color(int(255 * v), int(205 * v), int(150 * v)))
         self.strip.show()
         self._cleared = False
 

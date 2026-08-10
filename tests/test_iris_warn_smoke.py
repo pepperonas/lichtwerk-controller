@@ -101,9 +101,9 @@ def test_blinder_event_neutralises_the_lut_and_restores_it():
             saw_neutral = True
         time.sleep(0.02)
     assert saw_neutral, "blinder ON frames must neutralise the strip LUT to 255"
-    run_frames(c, 8)
+    run_frames(c, 40)   # Plan + 0.28 s Nachglimmen ausklingen lassen
     assert c.strip.getBrightness() == 100, \
-        "after the plan the configured LUT brightness must be restored"
+        "after the plan (incl. decay) the configured LUT brightness must be restored"
 
 
 def test_roll_and_accent_render_without_raising():
