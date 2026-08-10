@@ -876,7 +876,7 @@ class LichtwerkWebController:
             spots = []
             for _ in range(count):
                 centre = random.randrange(npx)
-                width = random.choice((1, 2, 2, 3))
+                width = random.choice((2, 3, 3, 4, 5))
                 bri = 0.6 + random.random() * 0.4
                 for off in range(-(width // 2), (width - 1) // 2 + 1):
                     j = centre + off
@@ -989,18 +989,18 @@ class LichtwerkWebController:
             if kind == 'double':
                 # Zwei Schlaege im ECHT gemessenen Kick-Abstand — das Licht
                 # echot den Rhythmus. ZWEIMAL DIESELBEN Stellen: das Echo.
-                win = ((0.0, 0.07, 1.0), (g, g + 0.07, 0.85))
-                sp = _sparkle_spots(12)
+                win = ((0.0, 0.10, 1.0), (g, g + 0.10, 0.85))
+                sp = _sparkle_spots(22)
                 spots = (sp, sp)
             elif kind == 'roll':
                 # Stakkato im Roll-Tempo, abklingend — je Puls NEUE Stellen
                 # (wandernder Glitzer), nie unter halbe Kraft.
-                win = tuple((i * g, i * g + 0.055, max(0.5, 1.0 - i * 0.14))
+                win = tuple((i * g, i * g + 0.09, max(0.5, 1.0 - i * 0.14))
                             for i in range(m))
-                spots = tuple(_sparkle_spots(9) for _ in win)
+                spots = tuple(_sparkle_spots(16) for _ in win)
             else:
-                win = ((0.0, 0.09, 1.0),)   # accent: ein einzelner Einschlag
-                spots = (_sparkle_spots(14),)
+                win = ((0.0, 0.16, 1.0),)   # accent: ein einzelner Einschlag
+                spots = (_sparkle_spots(26),)
             self.effect_params['iris_blinder'] = {'t0': t, 'win': win,
                                                   'spots': spots}
 
@@ -1229,7 +1229,7 @@ class LichtwerkWebController:
             # Sparse -> hell: nahe Warmweiss ist hier erlaubt (winzige
             # Gesamtlast); die LUT ist im Blinder-Fenster neutralisiert.
             spots = bl.get('spots') or ((),)
-            gv = 0.85 * blinder[1]
+            gv = 1.0 * blinder[1]   # sparse -> voll aufdrehen
             for j, bri in spots[min(blinder_wi, len(spots) - 1)]:
                 v = gv * bri
                 self.strip.setPixelColor(j, Color(int(255 * v), int(205 * v), int(150 * v)))

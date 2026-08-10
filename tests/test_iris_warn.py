@@ -461,7 +461,7 @@ def test_warn_event_route_and_intake_contracts():
     # Event-Weiss bleibt ABSOLUT (unabhaengig von controller.brightness und
     # Strip-LUT — Feldbefund 2026-08-09: LUT+Kernel-Gamma = unsichtbarer
     # Murks); seit 2026-08-10 als Sparse-Sparkle mit festem Gain.
-    assert "0.85 * blinder[1]" in src
+    assert "1.0 * blinder[1]" in src
     assert "scale * 0.55" not in src and "scale * 0.45" not in src, "the blinder must not scale with the mood dimmer"
     assert "want = 255 if blind_on else" in src, "blinder frames must neutralise the strip LUT"
     assert "if spark and n > 0 and not blind_on:" in src, "no sparks into a blinder frame"
@@ -500,7 +500,7 @@ def test_event_white_is_sparse_sparkle_on_black():
     assert "def _sparkle_spots(count):" in src
     assert "base = dark if blind_on else (c if lit else dark)" in src
     assert "spots = (sp, sp)" in src, "double must reuse the SAME spots — the echo"
-    assert "tuple(_sparkle_spots(9) for _ in win)" in src, "roll spots must wander"
+    assert "tuple(_sparkle_spots(16) for _ in win)" in src, "roll spots must wander"
     assert "Color(int(255 * v), int(205 * v), int(150 * v))" in src, \
         "sparse clusters may run near-true warm white — tiny load, high duty"
     assert "int(138 * bg)" not in src and "bg = 0.55" not in src, \
