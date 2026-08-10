@@ -1131,25 +1131,25 @@ class LichtwerkWebController:
             # Artefakte ZU den Blitzen). Deshalb Gain 0.45 + unten die
             # Halbdichte-Maske (jede 2. LED) — zusammen ~1/4 der Transiente,
             # optisch weiter ein Vollflaechen-Blitz.
-            bg = 0.45 * blinder[1]
-            # KALIBRIERTES Weiss statt naivem (255,232,214): auf WS2812B leuchtet
-            # die gruene Die ~2x pro Duty-Schritt (iris_wash.WHITE_POINT-Herleitung)
-            # — gleiche Kanaele lesen sich GRUEN, und die Kernel-Gamma verschiebt
-            # die Ratios weiter Richtung Gruen (Feldbefund 2026-08-10: 'die LEDs,
-            # die weiss sein sollen, sind gruen'). Der Weisspunkt ist per
-            # config.json iris_wash.white_point strip-spezifisch justierbar.
-            wp = self._wash_white_point
-            c = Color(int(wp[0] * bg), int(wp[1] * bg), int(wp[2] * bg))
+            bg = 0.55 * blinder[1]
+            # TUNGSTEN-Blinder (2026-08-10, Endergebnis der Gruen-Detektivarbeit):
+            # Die A/B-Tests am Geraet haben die Wahrheit zerlegt — (a) schnelles
+            # Neusenden von Rot ist SAUBER (Datenleitung unschuldig), (b) stehendes
+            # Vollweiss startet weiss und driftet binnen Sekunden gruenlich, hinten
+            # zuerst (Einspeisung nur vorn: die Schiene sackt ueber 10 m, die BLAUE
+            # Die stirbt als erste -> Weiss minus Blau = gelbgruen), (c) die zwei
+            # 5-m-Segmente je Kette rendern Weiss sichtbar verschieden (Binning).
+            # Neutrales Weiss ist auf dieser Verkabelung NICHT ehrlich darstellbar.
+            # Deshalb warmes Blitzlicht fast ohne Blau: was nicht da ist, kann
+            # hinten nicht wegsacken, und Blau-Binning streut am staerksten. Ist
+            # zudem stromguenstig -> Gain zurueck auf 0.55 und VOLLE Dichte.
+            # Echtes Kaltweiss braucht beidseitige Stromeinspeisung (Hardware).
+            c = Color(int(255 * bg), int(150 * bg), int(45 * bg))
         else:
             c = Color(int(hr * scale), int(hg * scale), int(hb * scale))
         dark = Color(0, 0, 0)
         base = c if lit else dark
-        if blind_on:
-            # Halbdichte-Blinder: jede 2. LED — halbiert den Stromsprung,
-            # liest auf Raumdistanz weiter als geschlossene Lichtflaeche.
-            for i in range(n):
-                self.strip.setPixelColor(i, c if (i & 1) == 0 else dark)
-        elif hasattr(self.strip, 'fill') and not waves:
+        if hasattr(self.strip, 'fill') and not waves:
             self.strip.fill(base)
         else:
             for i in range(n):

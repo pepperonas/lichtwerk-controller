@@ -365,7 +365,7 @@ def test_strip_drop_blinder_mirrors_the_page_bomb():
     assert "if ks >= 0.9 and avg >= 0.5" in src
     assert "> 8.0" in src
     assert "(0.0, 0.07, 1.0), (0.13, 0.22, 1.0), (0.30, 0.40, 0.7)" in src
-    assert "bg = 0.45 * blinder[1]" in src, \
+    assert "bg = 0.55 * blinder[1]" in src, \
         "blinder current class is set by POST-gamma duty — 0.45 + half-density mask"
 
 
@@ -461,7 +461,7 @@ def test_warn_event_route_and_intake_contracts():
     # Blinder bleibt in der erprobten 55-%-Stromklasse — aber ABSOLUT:
     # unabhaengig von controller.brightness UND der Strip-LUT (Feldbefund
     # 2026-08-09: LUT 100/255 + Kernel-Gamma = unsichtbarer gruener Murks).
-    assert "bg = 0.45 * blinder[1]" in src
+    assert "bg = 0.55 * blinder[1]" in src
     assert "scale * 0.55" not in src and "scale * 0.45" not in src, "the blinder must not scale with the mood dimmer"
     assert "want = 255 if blind_on else" in src, "blinder frames must neutralise the strip LUT"
     assert "if spark and n > 0 and not blind_on:" in src, "no sparks into a blinder frame"
@@ -481,21 +481,24 @@ def test_blinder_frames_are_resent_continuously():
     assert "return" not in branch, "no early-return while a blinder plan is active"
 
 
-def test_blinder_uses_half_density_mask():
-    """Runde 2 des Gruen-Artefakt-Fixes: die Last bestimmt der POST-GAMMA-Wert.
-    Der Blinder malt jede 2. LED — halber Stromsprung, auf Distanz weiter ein
-    Vollflaechen-Blitz. Die Transiente war es, die die Bits kippte."""
+def test_blinder_paints_full_density_again():
+    """Die Halbdichte-Maske (Runde 2) beruhte auf der Transienten-These — die
+    Geraete-A/B-Tests haben sie widerlegt (schnelles Rot-Neusenden: sauber).
+    Tungsten ist stromguenstig genug fuer die volle Flaeche."""
     src = _src()
-    assert "c if (i & 1) == 0 else dark" in src
+    assert "c if (i & 1) == 0 else dark" not in src
 
 
-def test_blinder_uses_the_calibrated_white_point():
-    """2026-08-10: naives RGB-Weiss liest sich auf WS2812B GRUEN (gruene Die
-    ~2x Luminanz je Duty-Schritt; die Kernel-Gamma verschiebt die Ratios
-    weiter). Der Blinder nutzt deshalb die kalibrierte, config-ueberschreibbare
-    Weiss-Referenz des Wash (iris_wash.WHITE_POINT via _wash_white_point) —
-    NIE wieder hartcodierte Gleich-Kanal-Weisstoene im Blinder."""
+def test_blinder_is_tungsten_not_neutral_white():
+    """2026-08-10 (Geraete-A/B-Tests): Vollweiss driftet auf dieser Verkabelung
+    binnen Sekunden gruenlich — Einspeisung nur vorn, die 5-V-Schiene sackt
+    ueber 10 m, die blaue Die (hoechste Flussspannung) stirbt zuerst; dazu
+    rendern die zwei 5-m-Segmente je Kette Weiss sichtbar verschieden
+    (Binning). Neutrales Weiss ist auf dieser Verkabelung nicht ehrlich
+    darstellbar. Der Blinder ist deshalb TUNGSTEN (fast ohne Blau): driftfest,
+    binning-fest, stromguenstig — volle Dichte, Gain 0.55. Neutralweiss erst
+    nach beidseitiger Stromeinspeisung wieder erwaegen."""
     src = _src()
-    assert "wp = self._wash_white_point" in src
-    assert "Color(int(wp[0] * bg), int(wp[1] * bg), int(wp[2] * bg))" in src
-    assert "int(232 * bg)" not in src and "int(214 * bg)" not in src
+    assert "Color(int(255 * bg), int(150 * bg), int(45 * bg))" in src
+    assert "bg = 0.55 * blinder[1]" in src
+    assert "wp[0] * bg" not in src and "int(232 * bg)" not in src
