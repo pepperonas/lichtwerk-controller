@@ -48,6 +48,50 @@ def iris_glow_factor(x, t):
     return IRIS_GLOW_MIN + (1.0 - IRIS_GLOW_MIN) * max(0.0, min(1.0, v))
 
 
+# ── Schattenzonen (Nutzerwunsch 2026-08-11: "Glut sieht man nicht stark
+# genug — Bereiche von ca. 50-150 cm weniger stark erhellen, dynamisch und
+# abwechselnd"). Bei 60 LED/m sind das 30-90 LEDs je Zone. Jede Zone hat ein
+# weiches Gauss-Profil (keine harten Kanten), dimmt ihr Zentrum auf ~15-45 %,
+# blendet ueber ihr Leben ein/aus und driftet langsam — der Nachschub spawnt
+# an zufaelliger Position: nie uniform, nie wiederholend, nie tot.
+IRIS_SHADOW_COUNT = 4        # Zonen gleichzeitig (auf 600 LEDs ~25-40 % Flaeche)
+IRIS_SHADOW_W_MIN = 30       # 50 cm
+IRIS_SHADOW_W_MAX = 90       # 150 cm
+IRIS_SHADOW_DEPTH_MIN = 0.55  # Zentrum dimmt auf 1-depth = 15..45 %
+IRIS_SHADOW_DEPTH_MAX = 0.85
+IRIS_SHADOW_LIFE_MIN = 4.0
+IRIS_SHADOW_LIFE_MAX = 9.0
+IRIS_SHADOW_VEL_MAX = 8.0    # LED/s Drift
+IRIS_SHADOW_RAMP = 1.0       # Ein-/Ausblendzeit in s
+
+
+def iris_shadow_profile(dist, width):
+    """Weiches Zonen-Profil: 1 im Zentrum, Gauss-Abfall — Halbwertsbreite
+    entspricht der Zonenbreite, keine harte Kante."""
+    sigma = width / 2.355     # FWHM -> sigma
+    return math.exp(-(dist * dist) / (2.0 * sigma * sigma))
+
+
+def iris_shadow_alpha(age, life, ramp=IRIS_SHADOW_RAMP):
+    """Trapez ueber die Lebenszeit: einblenden, halten, ausblenden."""
+    if age <= 0 or age >= life:
+        return 0.0
+    return max(0.0, min(1.0, min(age / ramp, (life - age) / ramp)))
+
+
+def iris_shadow_field(x, pockets, now):
+    """Multiplikative Abdunklung aller Zonen an Position x (0..1)."""
+    f = 1.0
+    for pk in pockets:
+        age = now - pk['born']
+        a = iris_shadow_alpha(age, pk['life'])
+        if a <= 0.0:
+            continue
+        pos = pk['pos'] + pk['vel'] * age
+        f *= 1.0 - pk['depth'] * a * iris_shadow_profile(x - pos, pk['width'])
+    return f
+
+
 IRIS_RED_HOLD = 0.22    # Anteil der Periode voll AN (der Schlag selbst)
 IRIS_RED_FLOOR = 0.06   # Glut-Boden — Rot stirbt nie ganz, es glimmt
 
@@ -1220,9 +1264,24 @@ class LichtwerkWebController:
 
         glow_tbl = None
         if t >= 0.21 and lit and not blind_on:
-            # Wander-Glut in 4er-Bloecken (150 sin-Paare/Frame statt 600 —
-            # bei 170+ LED Wellenlaenge unsichtbar grob)
-            glow_tbl = [iris_glow_factor(b + 1.5, t) for b in range(0, n, 4)]
+            # Schattenzonen-Lebenszyklus: abgelaufene ersetzen (an neuer,
+            # zufaelliger Position mit neuer Breite/Tiefe/Drift) — der Bestand
+            # bleibt bei IRIS_SHADOW_COUNT, gestaffelt durch zufaellige Leben.
+            pockets = self.effect_params.setdefault('iris_shadows', [])
+            pockets[:] = [pk for pk in pockets if t - pk['born'] < pk['life']]
+            while len(pockets) < IRIS_SHADOW_COUNT:
+                pockets.append({
+                    'pos': random.uniform(0, n),
+                    'width': random.uniform(IRIS_SHADOW_W_MIN, IRIS_SHADOW_W_MAX),
+                    'depth': random.uniform(IRIS_SHADOW_DEPTH_MIN, IRIS_SHADOW_DEPTH_MAX),
+                    'life': random.uniform(IRIS_SHADOW_LIFE_MIN, IRIS_SHADOW_LIFE_MAX),
+                    'vel': random.uniform(-IRIS_SHADOW_VEL_MAX, IRIS_SHADOW_VEL_MAX),
+                    'born': t,
+                })
+            # Wander-Glut (feine Grundtextur) x Schattenzonen, in 4er-Bloecken
+            glow_tbl = [iris_glow_factor(b + 1.5, t)
+                        * iris_shadow_field(b + 1.5, pockets, t)
+                        for b in range(0, n, 4)]
         c = Color(int(hr * scale * red_env), int(hg * scale * red_env), int(hb * scale * red_env))
         dark = Color(0, 0, 0)
         # SPARKLE-Blinder (Nutzerentscheid 2026-08-10, ersetzt das

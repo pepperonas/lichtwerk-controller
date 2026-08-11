@@ -141,3 +141,30 @@ def test_breathing_red_with_glow_renders_without_raising():
     c.effect_params.setdefault('iris_kicks', []).append({'s': 0.9, 'bpm': 128.0})
     run_frames(c, 16)
     assert c.strip.shows > 10
+
+
+def test_shadow_pockets_dim_visibly_and_softly():
+    """Schattenzonen (2026-08-11): 30-90 LED breite Bereiche dimmen das Rot
+    deutlich (Zentrum auf 15-45 %), mit weichen Raendern und Trapez-Leben."""
+    pk = {'pos': 300.0, 'width': 60.0, 'depth': 0.8, 'life': 6.0,
+          'vel': 0.0, 'born': 0.0}
+    now = 3.0   # mitten im Leben -> alpha 1
+    centre = wc.iris_shadow_field(300, [pk], now)
+    assert 0.15 < centre < 0.25, "Zentrum muss DEUTLICH dimmen (depth 0.8)"
+    edge = wc.iris_shadow_field(300 + 60, [pk], now)
+    assert edge > centre + 0.3, "weicher Abfall: eine Breite weiter ist es viel heller"
+    far = wc.iris_shadow_field(300 + 200, [pk], now)
+    assert far > 0.97, "ausserhalb bleibt das Rot praktisch voll"
+    # Trapez: frisch gespawnt und kurz vor dem Tod ist die Zone unsichtbar
+    assert wc.iris_shadow_field(300, [pk], 0.05) > 0.9
+    assert wc.iris_shadow_field(300, [pk], 5.95) > 0.9
+    # Drift: die Zone WANDERT mit vel
+    pk2 = dict(pk, vel=10.0)
+    assert wc.iris_shadow_field(300 + 30, [pk2], 3.0) < wc.iris_shadow_field(300 + 30, [pk], 3.0)
+
+
+def test_shadow_sizes_match_the_50_to_150_cm_request():
+    """50-150 cm bei 60 LED/m = 30-90 LEDs — die Konstanten muessen die
+    Nutzer-Anforderung woertlich abbilden."""
+    assert wc.IRIS_SHADOW_W_MIN == 30 and wc.IRIS_SHADOW_W_MAX == 90
+    assert 0.5 <= wc.IRIS_SHADOW_DEPTH_MIN < wc.IRIS_SHADOW_DEPTH_MAX <= 0.9

@@ -524,6 +524,14 @@ def test_red_base_is_spatially_modulated():
     multipliziert (4er-Bloecke), die Wellen blenden auf derselben Basis."""
     src = _src()
     assert "def iris_glow_factor(x, t):" in src
-    assert "glow_tbl = [iris_glow_factor(b + 1.5, t) for b in range(0, n, 4)]" in src
+    assert "glow_tbl = [iris_glow_factor(b + 1.5, t)" in src   # seit den Schattenzonen mehrzeilig
     assert "f = glow_tbl[i >> 2] * sc" in src
     assert "gf = red_env * (glow_tbl[i >> 2] if glow_tbl is not None else 1.0)" in src
+
+
+def test_shadow_pockets_are_wired_into_the_glow_table():
+    src = _src()
+    assert "iris_shadows" in src
+    assert "* iris_shadow_field(b + 1.5, pockets, t)" in src, \
+        "shadows must multiply into the same table base painting AND waves read"
+    assert "while len(pockets) < IRIS_SHADOW_COUNT:" in src, "der Nachschub haelt den Bestand"
