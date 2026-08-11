@@ -168,3 +168,25 @@ def test_shadow_sizes_match_the_50_to_150_cm_request():
     Nutzer-Anforderung woertlich abbilden."""
     assert wc.IRIS_SHADOW_W_MIN == 30 and wc.IRIS_SHADOW_W_MAX == 90
     assert 0.5 <= wc.IRIS_SHADOW_DEPTH_MIN < wc.IRIS_SHADOW_DEPTH_MAX <= 0.9
+
+
+def test_shadow_zombies_are_pruned_and_fresh_cohort_is_visible_immediately():
+    """Regression 2026-08-11: iris_t0 resettet je Warn-Flanke — Zonen mit
+    born aus der alten Zeitrechnung hatten negatives Alter (alpha 0), starben
+    nie und blockierten den Nachschub: Schatten dauerhaft unsichtbar. Jetzt:
+    Zeitreisende werden entsorgt, und die Initial-Kohorte spawnt RUECKDATIERT
+    (sofort mitten im Leben = sofort sichtbar trotz flatternder Flanke)."""
+    c = fresh()
+    # Zombie aus einer frueheren Zeitrechnung einschleusen
+    c.effect_params['iris_shadows'] = [
+        {'pos': 100.0, 'width': 60.0, 'depth': 0.8, 'life': 6.0,
+         'vel': 0.0, 'born': 9999.0}]
+    run_frames(c, 16)   # Engage + erste Sustain-Frames
+    pockets = c.effect_params['iris_shadows']
+    assert len(pockets) == wc.IRIS_SHADOW_COUNT
+    assert all(pk['born'] < 100 for pk in pockets), "Zombie muss entsorgt sein"
+    # Rueckdatierung: mindestens eine Zone ist bereits voll eingeblendet
+    # (Alter >= Einblendzeit) — die Kohorte ist SOFORT sichtbar.
+    visible = [pk for pk in pockets
+               if wc.iris_shadow_alpha(max(0.0, 0.5 - pk['born']), pk['life']) > 0.3]
+    assert visible, "Initial-Kohorte muss ohne 1-s-Wartezeit sichtbar sein"

@@ -997,6 +997,9 @@ class LichtwerkWebController:
             self.effect_params['iris_kick_avg'] = 0.0    # traeges Staerke-Mittel -> Drop-Erkennung
             self.effect_params['iris_blinder'] = None    # Blinder-Plan {'t0', 'win': ((a,b,gain),...)}
             self.effect_params['iris_events'] = []       # double/roll/accent von disco (verderblich)
+            self.effect_params['iris_shadows'] = []      # Schattenzonen: frische Kohorte je Engage
+                                                         # (iris_t0 resettet je Warn-Flanke -> alte
+                                                         # born-Zeiten waeren unsichtbare Zombies)
             self.effect_params['iris_drop_at'] = -1e9    # Cooldown 8 s — Bomben sind rar
             self.effect_params['iris_last_write'] = 0.0  # EIN Schreibtakt fuer ALLE Pfade
         t = _time.monotonic() - t0
@@ -1268,15 +1271,25 @@ class LichtwerkWebController:
             # zufaelliger Position mit neuer Breite/Tiefe/Drift) — der Bestand
             # bleibt bei IRIS_SHADOW_COUNT, gestaffelt durch zufaellige Leben.
             pockets = self.effect_params.setdefault('iris_shadows', [])
-            pockets[:] = [pk for pk in pockets if t - pk['born'] < pk['life']]
+            # 0 <= age: Zonen aus einer aelteren Zeitrechnung (iris_t0 wird je
+            # Warn-Flanke resettet) waeren mit negativem Alter unsichtbare
+            # Zombies, die nie sterben und den Nachschub blockieren — weg damit.
+            pockets[:] = [pk for pk in pockets
+                          if 0.0 <= t - pk['born'] < pk['life']]
+            fresh = not pockets
             while len(pockets) < IRIS_SHADOW_COUNT:
+                life = random.uniform(IRIS_SHADOW_LIFE_MIN, IRIS_SHADOW_LIFE_MAX)
+                # Initial-Kohorte rueckdatiert = sofort mitten im Leben und
+                # damit SOFORT sichtbar — die Warn-Flanke flattert bei Musik um
+                # die Schwelle, eine 1-s-Einblendzeit je Engage saehe man nie.
+                born = t - random.uniform(IRIS_SHADOW_RAMP, life * 0.6) if fresh else t
                 pockets.append({
                     'pos': random.uniform(0, n),
                     'width': random.uniform(IRIS_SHADOW_W_MIN, IRIS_SHADOW_W_MAX),
                     'depth': random.uniform(IRIS_SHADOW_DEPTH_MIN, IRIS_SHADOW_DEPTH_MAX),
-                    'life': random.uniform(IRIS_SHADOW_LIFE_MIN, IRIS_SHADOW_LIFE_MAX),
+                    'life': life,
                     'vel': random.uniform(-IRIS_SHADOW_VEL_MAX, IRIS_SHADOW_VEL_MAX),
-                    'born': t,
+                    'born': born,
                 })
             # Wander-Glut (feine Grundtextur) x Schattenzonen, in 4er-Bloecken
             glow_tbl = [iris_glow_factor(b + 1.5, t)
