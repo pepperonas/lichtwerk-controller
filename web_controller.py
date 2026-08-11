@@ -92,25 +92,30 @@ def iris_shadow_field(x, pockets, now):
     return f
 
 
-IRIS_RED_HOLD = 0.22    # Anteil der Periode voll AN (der Schlag selbst)
-IRIS_RED_FLOOR = 0.06   # Glut-Boden — Rot stirbt nie ganz, es glimmt
+IRIS_RED_ATTACK = 0.06  # Anteil der Periode zum Aufbluehen (~33 ms bei 0.55 s)
+IRIS_RED_HOLD = 0.16    # Anteil der Periode voll AN (der Schlag selbst)
+IRIS_RED_FLOOR = 0.16   # Glut-Boden — kleinerer Hub = ruhigeres Bild
 
 
 def iris_red_envelope(u):
-    """Atem-Huellkurve des roten Blitzes (Nutzerentscheid 2026-08-11).
+    """Atem-Huellkurve des roten Blitzes.
 
-    Der User liebte das Verglimmen der weissen Funken und wollte das Rot
-    "nicht mehr so hektisch / plump / primitiv". Ersetzt das binaere
-    Rechteck (65 % AN / 35 % SCHWARZ, harte Kanten): Attack bleibt HART
-    und sitzt exakt AUF dem Beat (u=0 nach dem Kick-Snap), danach haelt
-    der Schlag kurz voll und verglimmt quadratisch auf einen Glut-Boden —
-    dieselbe Abklingkurve wie die Sparkle-Blinder. Die alte "LEDs need
-    binary contrast"-Doktrin ist damit bewusst Geschichte.
+    2026-08-11 Runde 2 ("etwas weniger flashy"): der Attack SPRINGT nicht
+    mehr, er BLUEHT ueber die ersten 6 % der Periode auf (smoothstep,
+    ~33 ms bei 0.55 s — sitzt fuers Auge weiter auf dem Beat, liest sich
+    aber als Puls statt Strobe; Club-Praxis: Pulse haben endliche
+    Attacks, Strobes springen). Boden von 6 % auf 16 % angehoben — der
+    kleinere Hub nimmt dem Bild die Hektik. Danach quadratisches
+    Verglimmen wie bei den Sparkle-Blindern.
     """
     u = u % 1.0
-    if u < IRIS_RED_HOLD:
+    if u < IRIS_RED_ATTACK:
+        f = u / IRIS_RED_ATTACK
+        rise = f * f * (3.0 - 2.0 * f)
+        return IRIS_RED_FLOOR + (1.0 - IRIS_RED_FLOOR) * rise
+    if u < IRIS_RED_ATTACK + IRIS_RED_HOLD:
         return 1.0
-    f = (u - IRIS_RED_HOLD) / (1.0 - IRIS_RED_HOLD)
+    f = (u - IRIS_RED_ATTACK - IRIS_RED_HOLD) / (1.0 - IRIS_RED_ATTACK - IRIS_RED_HOLD)
     g = 1.0 - f
     return IRIS_RED_FLOOR + (1.0 - IRIS_RED_FLOOR) * g * g
 

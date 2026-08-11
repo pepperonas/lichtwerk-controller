@@ -35,40 +35,37 @@ def test_iris_engage_double_pulse_pattern():
 
 
 def _red_env_mirror(u):
-    """Mirror von web_controller.iris_red_envelope (HOLD 0.22, FLOOR 0.06)."""
+    """Mirror von web_controller.iris_red_envelope (ATTACK 0.06, HOLD 0.16,
+    FLOOR 0.16 — Stand 'weniger flashy', 2026-08-11 Runde 2)."""
     u = u % 1.0
+    if u < 0.06:
+        f = u / 0.06
+        return 0.16 + 0.84 * (f * f * (3.0 - 2.0 * f))
     if u < 0.22:
         return 1.0
     f = (u - 0.22) / 0.78
     g = 1.0 - f
-    return 0.06 + 0.94 * g * g
+    return 0.16 + 0.84 * g * g
 
 
-def test_red_breathes_with_hard_attack_and_soft_decay():
-    """Nutzerentscheid 2026-08-11: das Rot soll nicht mehr 'hektisch / plump /
-    primitiv' rechtecken, sondern wie die Sparkle-Funken verglimmen. Der
-    Attack bleibt HART und sitzt auf dem Beat (Kick-Snap setzt u=0); danach
-    quadratischer Abfall auf einen Glut-Boden. Die alte 'LEDs need binary
-    contrast'-Doktrin ist bewusst Geschichte."""
-    assert _red_env_mirror(0.0) == 1.0
-    assert _red_env_mirror(0.21) == 1.0          # der Schlag haelt kurz voll
-    # danach streng fallend ...
+def test_red_blooms_fast_then_dies_slow():
+    """'Weniger flashy' (2026-08-11 Runde 2): der Attack blueht ueber die
+    ersten 6 % der Periode auf (Puls, kein Strobe-Sprung), sitzt aber weiter
+    auf dem Beat; der Boden liegt bei 16 % — kleinerer Hub, ruhigeres Bild."""
+    assert abs(_red_env_mirror(0.0) - 0.16) < 1e-9, "startet am Glut-Boden"
+    assert _red_env_mirror(0.03) > 0.5, "Aufbluehen ist schnell"
+    assert _red_env_mirror(0.06) == 1.0 and _red_env_mirror(0.21) == 1.0
     samples = [_red_env_mirror(u) for u in (0.3, 0.45, 0.6, 0.8, 0.99)]
     assert samples == sorted(samples, reverse=True)
-    # ... aber weich: benachbarte Schritte springen nie hart
     for a, b in zip(samples, samples[1:]):
-        assert 0 < a - b < 0.45
-    # Glut-Boden: Rot stirbt nie ganz
-    assert 0.05 < _red_env_mirror(0.999) < 0.12
-    # Attack-Sprung am Perioden-Wrap: vom Boden schlagartig auf voll
-    assert _red_env_mirror(0.0) - _red_env_mirror(0.999) > 0.85
+        assert 0 < a - b < 0.4, "weiches Verglimmen, keine Spruenge"
+    assert 0.15 < _red_env_mirror(0.999) < 0.22, "Boden 16 % — nie tot"
 
 
 def test_red_mean_energy_stays_moderate():
-    """Energie-Budget: das Atmen darf im Mittel nicht heller sein als das alte
-    65-%-Rechteck (Strom + Blendung); grob halbe Vollhelligkeit."""
+    """Energie-Budget: im Mittel etwa halbe Vollhelligkeit."""
     mean = sum(_red_env_mirror(i / 1000.0) for i in range(1000)) / 1000.0
-    assert 0.40 < mean < 0.60
+    assert 0.42 < mean < 0.62
 
 
 def test_web_controller_registers_iris_warn():
