@@ -22,6 +22,29 @@ import random
 WASH_FPS = 30.0
 WASH_FRAME_S = 1.0 / WASH_FPS
 
+IRIS_RED_HOLD = 0.22    # Anteil der Periode voll AN (der Schlag selbst)
+IRIS_RED_FLOOR = 0.06   # Glut-Boden — Rot stirbt nie ganz, es glimmt
+
+
+def iris_red_envelope(u):
+    """Atem-Huellkurve des roten Blitzes (Nutzerentscheid 2026-08-11).
+
+    Der User liebte das Verglimmen der weissen Funken und wollte das Rot
+    "nicht mehr so hektisch / plump / primitiv". Ersetzt das binaere
+    Rechteck (65 % AN / 35 % SCHWARZ, harte Kanten): Attack bleibt HART
+    und sitzt exakt AUF dem Beat (u=0 nach dem Kick-Snap), danach haelt
+    der Schlag kurz voll und verglimmt quadratisch auf einen Glut-Boden —
+    dieselbe Abklingkurve wie die Sparkle-Blinder. Die alte "LEDs need
+    binary contrast"-Doktrin ist damit bewusst Geschichte.
+    """
+    u = u % 1.0
+    if u < IRIS_RED_HOLD:
+        return 1.0
+    f = (u - IRIS_RED_HOLD) / (1.0 - IRIS_RED_HOLD)
+    g = 1.0 - f
+    return IRIS_RED_FLOOR + (1.0 - IRIS_RED_FLOOR) * g * g
+
+
 app = Flask(__name__)
 CORS(app)
 
@@ -834,8 +857,11 @@ class LichtwerkWebController:
     def effect_iris_warn(self):
         """Hard Iris blitz — LED translation of dB-Analyse `over-iris`.
 
-        On screen the crimson wash pops against a dark page; soft red-on-dim-red
-        on WS2812 only 'glows'. LEDs need binary contrast: FULL crimson ↔ BLACK.
+        On screen the crimson wash pops against a dark page. Historische
+        Doktrin war "LEDs need binary contrast: FULL crimson <-> BLACK" —
+        seit 2026-08-11 auf Nutzerwunsch ersetzt: Attack hart AUF dem Beat,
+        danach verglimmt das Rot per iris_red_envelope auf einen Glut-Boden
+        (dieselbe Abklingsprache wie die Sparkle-Blinder).
 
         Timing:
           1) Engage double-pulse (class applied → hard snap)
@@ -1063,14 +1089,23 @@ class LichtwerkWebController:
 
         # ── Engage: two hard pulses (Aufleuchten) ──
         # ON 70ms · OFF 60ms · ON 80ms, then sustain
+        red_env = 1.0
         if t < 0.21:
             lit = not (0.07 <= t < 0.13)
         else:
-            # Square wave: tempo-locked period while kicks flow, the tagged
-            # period = 0.55 free-run otherwise; iris_ph rests at 0.0 → without
-            # kicks every frame is identical to perfekt-20260805.
+            # Atmen statt Rechteck (2026-08-11): Periode bleibt tempo-gelockt
+            # und der Attack sitzt AUF dem Beat (Kick-Snap setzt u=0) — aber
+            # statt 65 % AN / 35 % SCHWARZ verglimmt der Schlag ueber die
+            # Periode auf einen Glut-Boden (iris_red_envelope).
             u = ((t - 0.21 - self.effect_params.get('iris_ph', 0.0)) / iris_period) % 1.0
-            lit = u < 0.65  # ~65% ON / 35% BLACK
+            lit = True
+            red_env = iris_red_envelope(u)
+            prev_u = self.effect_params.get('iris_prev_u')
+            self.effect_params['iris_prev_u'] = u
+            if prev_u is not None and u < prev_u - 0.5:
+                # Perioden-Wrap = Schlagmoment -> Funkenfenster (Freilauf;
+                # echte Kicks armieren es ohnehin im Intake)
+                self.effect_params['iris_spark_until'] = t + 0.055
 
         if blinder is not None:
             lit = blinder[0]
@@ -1107,6 +1142,14 @@ class LichtwerkWebController:
             # die Y-Kette verschaerft die marginale 3,3-V-Leitung). Slips sind
             # per-Transmission, nicht klebrig: der 20-ms-Refresh heilt sie,
             # bevor das Auge sie als Farbe liest.
+            pass
+        elif t >= 0.21:
+            # Atmender Rot-Fade (2026-08-11): kontinuierlich neu zeichnen —
+            # der 20-ms-Schreibtakt unten paced (~50 fps, dieselbe Klasse wie
+            # die Wellen; der A/B-Test hat schnelles Rot-Neusenden als sauber
+            # bewiesen). Der 80-ms-Heartbeat wuerde den Verglimm-Verlauf in
+            # sichtbare Stufen zerhacken; seine Slip-Heilung uebernimmt der
+            # Dauertakt gleich mit.
             pass
         elif last is lit and last_spark is spark:
             # Heartbeat statt reiner Flanken-Optimierung (2026-08-06): ein
@@ -1149,7 +1192,7 @@ class LichtwerkWebController:
             self.clear(force=True)
             return
 
-        c = Color(int(hr * scale), int(hg * scale), int(hb * scale))
+        c = Color(int(hr * scale * red_env), int(hg * scale * red_env), int(hb * scale * red_env))
         dark = Color(0, 0, 0)
         # SPARKLE-Blinder (Nutzerentscheid 2026-08-10, ersetzt das
         # Vollflaechen-Flutlicht): waehrend eines Event-Pulses geht das ROT AUS
@@ -1203,7 +1246,7 @@ class LichtwerkWebController:
                     if halo <= 0.02:
                         continue
                     core = cool * w['s'] * (2.718281828 ** (-(d * d) / (2.0 * cw * cw)))
-                    br, bg_, bb = (hr, hg, hb) if lit else (0, 0, 0)
+                    br, bg_, bb = (hr * red_env, hg * red_env, hb * red_env) if lit else (0, 0, 0)
                     r_ = br + (xr - br) * halo
                     g_ = bg_ + (xg - bg_) * halo
                     b_ = bb + (xb - bb) * halo

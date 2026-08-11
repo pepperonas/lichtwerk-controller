@@ -34,28 +34,41 @@ def test_iris_engage_double_pulse_pattern():
     assert iris_phase(0.20) is True
 
 
-def test_iris_sustain_duty_cycle_about_65_percent():
-    # Sample sustain window after engage
-    lit = sum(1 for i in range(100) if iris_phase(0.21 + i * 0.01))
-    # 1.0s of samples → expect ~65 lit
-    assert 55 <= lit <= 75
+def _red_env_mirror(u):
+    """Mirror von web_controller.iris_red_envelope (HOLD 0.22, FLOOR 0.06)."""
+    u = u % 1.0
+    if u < 0.22:
+        return 1.0
+    f = (u - 0.22) / 0.78
+    g = 1.0 - f
+    return 0.06 + 0.94 * g * g
 
 
-def test_iris_hard_edges_not_soft_glow():
-    """Adjacent samples around a cut must be binary True/False — no mid values."""
-    # Find a falling edge in sustain
-    prev = iris_phase(0.21)
-    edge = None
-    for i in range(1, 200):
-        t = 0.21 + i * 0.005
-        cur = iris_phase(t)
-        if prev and not cur:
-            edge = t
-            break
-        prev = cur
-    assert edge is not None
-    assert iris_phase(edge - 0.005) is True
-    assert iris_phase(edge) is False
+def test_red_breathes_with_hard_attack_and_soft_decay():
+    """Nutzerentscheid 2026-08-11: das Rot soll nicht mehr 'hektisch / plump /
+    primitiv' rechtecken, sondern wie die Sparkle-Funken verglimmen. Der
+    Attack bleibt HART und sitzt auf dem Beat (Kick-Snap setzt u=0); danach
+    quadratischer Abfall auf einen Glut-Boden. Die alte 'LEDs need binary
+    contrast'-Doktrin ist bewusst Geschichte."""
+    assert _red_env_mirror(0.0) == 1.0
+    assert _red_env_mirror(0.21) == 1.0          # der Schlag haelt kurz voll
+    # danach streng fallend ...
+    samples = [_red_env_mirror(u) for u in (0.3, 0.45, 0.6, 0.8, 0.99)]
+    assert samples == sorted(samples, reverse=True)
+    # ... aber weich: benachbarte Schritte springen nie hart
+    for a, b in zip(samples, samples[1:]):
+        assert 0 < a - b < 0.45
+    # Glut-Boden: Rot stirbt nie ganz
+    assert 0.05 < _red_env_mirror(0.999) < 0.12
+    # Attack-Sprung am Perioden-Wrap: vom Boden schlagartig auf voll
+    assert _red_env_mirror(0.0) - _red_env_mirror(0.999) > 0.85
+
+
+def test_red_mean_energy_stays_moderate():
+    """Energie-Budget: das Atmen darf im Mittel nicht heller sein als das alte
+    65-%-Rechteck (Strom + Blendung); grob halbe Vollhelligkeit."""
+    mean = sum(_red_env_mirror(i / 1000.0) for i in range(1000)) / 1000.0
+    assert 0.40 < mean < 0.60
 
 
 def test_web_controller_registers_iris_warn():
@@ -64,7 +77,7 @@ def test_web_controller_registers_iris_warn():
     assert "'iris_warn': self.effect_iris_warn" in src
     assert "iris_warn" in src
     assert "0.55" in src  # period / attack
-    assert "0.65" in src  # duty
+    assert "iris_red_envelope(u)" in src  # Atem-Huellkurve statt 65%-Rechteck
     assert "spark" in src.lower() or "iris_spark" in src
     assert "255, 70, 55" in src or "255,70,55" in src
 
@@ -186,7 +199,7 @@ def test_kick_extension_falls_back_to_the_tagged_blitz():
     assert "self.effect_params['iris_ph'] = 0.0" in src
     assert "iris_ph', 0.0" in src              # default keeps the free-run identity
     assert "period = 0.55" in src
-    assert "u < 0.65" in src
+    assert "red_env = iris_red_envelope(u)" in src
     assert "Fallback IS the tag" in src
 
 
