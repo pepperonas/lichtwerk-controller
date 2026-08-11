@@ -518,3 +518,12 @@ def test_event_white_is_sparse_sparkle_on_black():
         "sparse clusters may run near-true warm white — tiny load, high duty"
     assert "int(138 * bg)" not in src and "bg = 0.55" not in src, \
         "the full-surface tungsten flood must be gone"
+
+def test_red_base_is_spatially_modulated():
+    """Wander-Glut-Pins: die Basis wird pro LED mit der Glut-Tabelle
+    multipliziert (4er-Bloecke), die Wellen blenden auf derselben Basis."""
+    src = _src()
+    assert "def iris_glow_factor(x, t):" in src
+    assert "glow_tbl = [iris_glow_factor(b + 1.5, t) for b in range(0, n, 4)]" in src
+    assert "f = glow_tbl[i >> 2] * sc" in src
+    assert "gf = red_env * (glow_tbl[i >> 2] if glow_tbl is not None else 1.0)" in src

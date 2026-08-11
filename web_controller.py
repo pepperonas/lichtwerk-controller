@@ -22,6 +22,32 @@ import random
 WASH_FPS = 30.0
 WASH_FRAME_S = 1.0 / WASH_FPS
 
+IRIS_GLOW_MIN = 0.45    # dunkelste Zone der Wander-Glut (nie uniform, nie tot)
+IRIS_GLOW_L1 = 170.0    # Wellenlaengen in LEDs — bewusst inkommensurabel
+IRIS_GLOW_L2 = 290.0    #   (und keine Teiler von 600: kein symmetrisches Muster)
+IRIS_GLOW_V1 = 14.0     # Driftgeschwindigkeiten in LED/s — gegenlaeufig,
+IRIS_GLOW_V2 = -9.0     #   die Ueberlagerung wiederholt sich nie sichtbar
+
+
+def iris_glow_factor(x, t):
+    """Raeumliche Glut-Modulation des Rots (Nutzerwunsch 2026-08-11).
+
+    'Rot soll nicht ueberall gleich intensiv leuchten — die intensiven
+    Bereiche sollen wandern.' Die Strip-Uebersetzung der Glut-Blobs der
+    dB-Analyse-Seite: zwei langsame Sinuswellen mit inkommensurablen
+    Wellenlaengen driften gegenlaeufig; ihre Summe formt helle Zonen, die
+    ohne sichtbare Schleife den Streifen entlangwandern. Multipliziert
+    sich mit der Atem-Huellkurve (iris_red_envelope): Rot atmet zeitlich
+    UND wandert raeumlich — Glut, in der es arbeitet.
+    """
+    v = (0.5
+         + 0.25 * math.sin(x * (2 * math.pi / IRIS_GLOW_L1)
+                           + t * (2 * math.pi * IRIS_GLOW_V1 / IRIS_GLOW_L1))
+         + 0.25 * math.sin(x * (2 * math.pi / IRIS_GLOW_L2)
+                           + t * (2 * math.pi * IRIS_GLOW_V2 / IRIS_GLOW_L2)))
+    return IRIS_GLOW_MIN + (1.0 - IRIS_GLOW_MIN) * max(0.0, min(1.0, v))
+
+
 IRIS_RED_HOLD = 0.22    # Anteil der Periode voll AN (der Schlag selbst)
 IRIS_RED_FLOOR = 0.06   # Glut-Boden — Rot stirbt nie ganz, es glimmt
 
@@ -1192,6 +1218,11 @@ class LichtwerkWebController:
             self.clear(force=True)
             return
 
+        glow_tbl = None
+        if t >= 0.21 and lit and not blind_on:
+            # Wander-Glut in 4er-Bloecken (150 sin-Paare/Frame statt 600 —
+            # bei 170+ LED Wellenlaenge unsichtbar grob)
+            glow_tbl = [iris_glow_factor(b + 1.5, t) for b in range(0, n, 4)]
         c = Color(int(hr * scale * red_env), int(hg * scale * red_env), int(hb * scale * red_env))
         dark = Color(0, 0, 0)
         # SPARKLE-Blinder (Nutzerentscheid 2026-08-10, ersetzt das
@@ -1206,7 +1237,13 @@ class LichtwerkWebController:
         # Warmweiss; der Schwarz-Kontrast macht den Blitz. Vollflaechen-
         # Kaltweiss braucht beidseitige Stromeinspeisung (Hardware).
         base = dark if blind_on else (c if lit else dark)
-        if hasattr(self.strip, 'fill') and not waves:
+        if glow_tbl is not None:
+            # Rot atmet zeitlich (red_env) UND wandert raeumlich (glow_tbl)
+            sc = scale * red_env
+            for i in range(n):
+                f = glow_tbl[i >> 2] * sc
+                self.strip.setPixelColor(i, Color(int(hr * f), int(hg * f), int(hb * f)))
+        elif hasattr(self.strip, 'fill') and not waves:
             self.strip.fill(base)
         else:
             for i in range(n):
@@ -1246,7 +1283,8 @@ class LichtwerkWebController:
                     if halo <= 0.02:
                         continue
                     core = cool * w['s'] * (2.718281828 ** (-(d * d) / (2.0 * cw * cw)))
-                    br, bg_, bb = (hr * red_env, hg * red_env, hb * red_env) if lit else (0, 0, 0)
+                    gf = red_env * (glow_tbl[i >> 2] if glow_tbl is not None else 1.0)
+                    br, bg_, bb = (hr * gf, hg * gf, hb * gf) if lit else (0, 0, 0)
                     r_ = br + (xr - br) * halo
                     g_ = bg_ + (xg - bg_) * halo
                     b_ = bb + (xb - bb) * halo

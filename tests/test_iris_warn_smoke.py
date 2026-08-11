@@ -115,3 +115,29 @@ def test_roll_and_accent_render_without_raising():
     c.effect_params.setdefault('iris_events', []).append({'kind': 'accent'})
     run_frames(c, 10)
     assert c.strip.shows > 20
+
+
+def test_glow_factor_wanders_and_stays_in_band():
+    """Wander-Glut (2026-08-11): Rot ist nie uniform — helle Zonen wandern.
+    Direkt gegen die echte Funktion getestet (kein Spiegel-Drift moeglich)."""
+    N = 600
+    for t in (0.0, 3.7, 12.4):
+        vals = [wc.iris_glow_factor(x, t) for x in range(N)]
+        assert all(wc.IRIS_GLOW_MIN <= v <= 1.0 for v in vals)
+        assert max(vals) - min(vals) > 0.3, "sichtbare Modulation, nicht uniform"
+    # Die hellste Stelle WANDERT: argmax verschiebt sich ueber die Zeit
+    def argmax_at(t):
+        vals = [wc.iris_glow_factor(x, t) for x in range(N)]
+        return vals.index(max(vals))
+    a, b, c = argmax_at(0.0), argmax_at(4.0), argmax_at(9.0)
+    assert len({a, b, c}) >= 2 and (abs(a - b) > 10 or abs(b - c) > 10)
+
+
+def test_breathing_red_with_glow_renders_without_raising():
+    """Der modulierte Basis-Pfad (per-LED-Loop + 4er-Block-Tabelle) laeuft
+    exceptionfrei durch echte Sustain-Frames, auch mit Kick + Welle."""
+    c = fresh()
+    run_frames(c, 16)   # Engage (0.21 s) + Sustain-Frames
+    c.effect_params.setdefault('iris_kicks', []).append({'s': 0.9, 'bpm': 128.0})
+    run_frames(c, 16)
+    assert c.strip.shows > 10
