@@ -84,6 +84,18 @@ RANGES = {
     "meteor_max_concurrent": (1, 4),
     "meteor_head_temp": (4000.0, 10000.0),
     "meteor_tail_temp": (1500.0, 5000.0),
+    # Stardust (W3)
+    "stardust_max_particles": (20, 300),
+    "stardust_life_min_ms": (50.0, 500.0),
+    "stardust_life_max_ms": (20.0, 500.0),
+    "stardust_powerlaw_k": (1.0, 5.0),
+    "stardust_min_dist": (1.0, 20.0),
+    "stardust_temp_min": (2500.0, 10000.0),
+    "stardust_temp_max": (2500.0, 10000.0),
+    "stardust_attack": (0.1, 0.5),
+    "stardust_gain": (0.3, 1.0),
+    "stardust_ambient": (0.0, 3.0),
+    "meteor_spark_count": (4, 80),
     "drop_ks": (0.5, 1.0),
     "drop_avg": (0.1, 1.0),
     "drop_cooldown": (2.0, 60.0),
@@ -142,6 +154,26 @@ DEFAULTS = {
     "meteor_max_concurrent": 2,
     "meteor_head_temp": 7500.0,   # Kopf minimal kuehl ("Plasma"-Spitze)
     "meteor_tail_temp": 2900.0,   # Schweif verglueht ins Warme
+
+    # W3: Stardust — Sternenstaub-Burst (Kind 'stardust') + Funkenflug.
+    # Partikel werden beim Intake VORGENERIERT (Blue-Noise-Positionen,
+    # Potenzgesetz-Helligkeit, Farbtemperatur-Streuung) — der Malpfad ist
+    # eine Schleife ueber lebende Partikel, keine Allokation im Frame.
+    "stardust_enabled": True,
+    "stardust_max_particles": 120,
+    "stardust_life_min_ms": 60.0,
+    "stardust_life_max_ms": 250.0,
+    "stardust_powerlaw_k": 2.5,    # viele schwache, wenige sehr helle
+    "stardust_min_dist": 4.0,      # Poisson-Disk: nie verklumpt
+    "stardust_temp_min": 4000.0,   # Diamant-Streuung; kuehle Toene nur auf
+    "stardust_temp_max": 8000.0,   # hellen EINZEL-Partikeln (Blau-Die-Physik)
+    "stardust_attack": 0.25,       # Attack-Anteil des Lebens (nie hart an)
+    "stardust_gain": 1.0,          # absolut (Blinder-Stromklasse)
+    # Ambient-Dauer-Glitzer in Sparkles/s — Phase-1-Entscheid: default AUS.
+    "stardust_ambient": 0.0,
+    # Funkenflug: Sparkles entlang der Meteor-Bahn, kurz verzoegert.
+    "meteor_sparks": True,
+    "meteor_spark_count": 26,
 
     # Takt: Freilauf-Periode + Klemmen + Tempo-Lock-Glaettung
     "period_freerun": 0.55,

@@ -65,6 +65,16 @@ class FakeStrip:
 def fresh(strip=None):
     """Den (im Demo-Modus gebauten) Modul-Controller pro Test zuruecksetzen."""
     c = wc.controller
+    # Der Import startet den ECHTEN Effekt-Loop-Thread — der malte waehrend
+    # der Tests nebenlaeufig 'solid'-Frames auf den FakeStrip (gemessen:
+    # 5 shows/0.3 s) und verfaelschte Frame-Captures mit ~1 % je Zugriff.
+    # DAS war die Quelle aller wandernden Suite-Fehlschlaege (Golden-Hash,
+    # Paar-Vergleiche). Fuer Tests wird der Loop einmalig beendet; die
+    # Tests treiben effect_iris_warn direkt.
+    if c.effect_thread is not None and c.effect_thread.is_alive():
+        c.running = False
+        c._effect_wake.set()
+        c.effect_thread.join(timeout=1.0)
     c.strip = strip or FakeStrip()
     c.effect_params = {}
     c.brightness = 100

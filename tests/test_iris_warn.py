@@ -451,7 +451,7 @@ def test_warn_event_route_and_intake_contracts():
     gewinnt (Events verderblich), alter iris_drop_t0-Pfad vollstaendig ersetzt."""
     src = _src()
     assert "@app.route('/api/warn_event', methods=['POST'])" in src
-    assert "('double', 'roll', 'accent', 'burst', 'sweep', 'shimmer', 'echo', 'meteor')" in src, "kind whitelist"
+    assert "('double', 'roll', 'accent', 'burst', 'sweep', 'shimmer', 'echo', 'meteor', 'stardust')" in src, "kind whitelist"
     # Gap-Clamp lebt seit L6 im _f()-Helper; die Grenzen bleiben der Vertrag.
     assert "gap = _f('gap_ms', 160, 60, 400) / 1000.0" in src
     # dur_ms ABWESEND muss 0.0 bleiben (Intake-Fallback, z.B. 0.7 s Sweep) —

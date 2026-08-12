@@ -524,6 +524,27 @@ class LichtwerkWebController:
     def wake_effect(self):
         """Interrupt effect-loop sleep so the next frame paints ASAP."""
         self._effect_wake.set()
+
+    def _px_mix(self, i, r, g, b, w):
+        """Replace-Blend gegen den AKTUELLEN Puffer — komponiert, nie ueberschreiben.
+
+        Ein Lerp gegen die BERECHNETE Basis liesse jeden spaeteren Maler
+        (Rueckwelle/Flash/Sparkle) einen frueheren hellen Maler wieder
+        UEBERSCHREIBEN statt darueberzulegen (Feldbefund W2: die letzten
+        6 LEDs verloren den Meteor-Kopf an die Rueckwelle). Geteilt von
+        Meteor (W2) und Stardust (W3).
+        """
+        if w <= 0.003:
+            return
+        cur = self.strip.getPixelColor(i)
+        cr = (cur >> 16) & 0xFF
+        cg = (cur >> 8) & 0xFF
+        cb = cur & 0xFF
+        w = min(1.0, w)
+        self.strip.setPixelColor(i, Color(
+            int(cr + (r - cr) * w),
+            int(cg + (g - cg) * w),
+            int(cb + (b - cb) * w)))
     
     def set_pixel(self, index, r, g, b, brightness=1.0):
         if not self.strip:
@@ -1331,16 +1352,73 @@ class LichtwerkWebController:
                     exit_abs = pre + delay + exit_t
                     first_exit = exit_abs if first_exit is None else min(first_exit, exit_abs)
                     flight_end = max(flight_end, pre + delay + dur)
+                plan_end = flight_end + IRIS['meteor_recover_s']
+                sparks_fx = []
+                if IRIS['stardust_enabled'] and IRIS['meteor_sparks']:
+                    # Funkenflug: Sparkles entlang der Bahn, geboren kurz
+                    # NACH dem Durchflug des Kopfs (40-120 ms Nachgluehen).
+                    for _ in range(int(IRIS['meteor_spark_count'])):
+                        m_ref = meteors[rng.randrange(len(meteors))]
+                        x = rng.uniform(0.0, float(n_px))
+                        travel = (x - m_ref['start']) * m_ref['sign']
+                        t_pass = iris_meteor_time_for(
+                            travel, m_ref['v0'], m_ref['dur'], profile)
+                        birth = (pre + m_ref['delay'] + t_pass
+                                 + rng.uniform(0.04, 0.12))
+                        life = max(0.06, rng.uniform(0.08, 0.25))
+                        peak = (0.3 + 0.7 * iris_render.powerlaw_brightness(
+                            rng.random(), IRIS['stardust_powerlaw_k']))
+                        sparks_fx.append({
+                            'pos': min(float(n_px) - 0.01, max(0.0, x + rng.uniform(-3.0, 3.0))),
+                            'birth': birth, 'life': life, 'peak': peak,
+                            'rgb': iris_render.temp_to_rgb(
+                                rng.uniform(3800.0, 7000.0))})
+                        plan_end = max(plan_end, birth + life + 0.05)
                 self.effect_params['iris_blinder'] = {
                     't0': t, 'type': 'meteor', 'mode': 'duck',
-                    'win': ((0.0, flight_end + IRIS['meteor_recover_s'], 1.0),),
+                    'win': ((0.0, plan_end, 1.0),),
                     'pre': pre, 'flight_end': flight_end,
                     'impact_at': first_exit if IRIS['meteor_impact'] else None,
                     'launch_at': pre if IRIS['meteor_launch'] else None,
-                    'meteors': meteors}
+                    'meteors': meteors, 'sparks_fx': sparks_fx}
                 print(f"warn_event angenommen: meteor n={count} "
                       f"v={'/'.join(str(int(m['v0'])) for m in meteors)} "
-                      f"dir={sign} dauer={flight_end:.2f}s", flush=True)
+                      f"dir={sign} dauer={flight_end:.2f}s "
+                      f"funken={len(sparks_fx)}", flush=True)
+                continue
+            if kind == 'stardust':
+                # W3: Sternenstaub-Burst — Partikel komplett vorgeneriert
+                # (deterministisch aus iris_rng): Blue-Noise-Positionen,
+                # Geburt ueber die Burst-Dauer verteilt, Leben 40-250 ms,
+                # Peak nach Potenzgesetz, Farbtemperatur gestreut.
+                if not IRIS['stardust_enabled']:
+                    continue
+                rng = self.effect_params.get('iris_rng') or random
+                n_px = self.strip.numPixels()
+                sd_dur = dur or 0.7
+                count = max(6, min(int(IRIS['stardust_max_particles']),
+                                   int(80 * dens * (sd_dur / 0.7))))
+                positions = iris_render.blue_noise_positions(
+                    rng, count, n_px, IRIS['stardust_min_dist'])
+                l_min = IRIS['stardust_life_min_ms'] / 1000.0
+                l_max = max(l_min, IRIS['stardust_life_max_ms'] / 1000.0)
+                parts, plan_end = [], 0.0
+                for p in positions:
+                    birth = rng.uniform(0.0, sd_dur)
+                    life = max(0.06, rng.uniform(l_min, l_max))  # >= 3 Frames (50 fps)
+                    peak = ((0.35 + 0.65 * iris_render.powerlaw_brightness(
+                        rng.random(), IRIS['stardust_powerlaw_k'])) * inten)
+                    parts.append({
+                        'pos': p, 'birth': birth, 'life': life, 'peak': peak,
+                        'rgb': iris_render.temp_to_rgb(rng.uniform(
+                            IRIS['stardust_temp_min'], IRIS['stardust_temp_max']))})
+                    plan_end = max(plan_end, birth + life)
+                self.effect_params['iris_blinder'] = {
+                    't0': t, 'type': 'stardust',
+                    'win': ((0.0, plan_end, inten),),
+                    'parts': parts}
+                print(f"warn_event angenommen: stardust teilchen={len(parts)} "
+                      f"dauer={plan_end:.2f}s", flush=True)
                 continue
             if kind == 'sweep':
                 self.effect_params['iris_blinder'] = {
@@ -1732,6 +1810,39 @@ class LichtwerkWebController:
             rng = random.Random(int(t0 * 1000) ^ int(t * 200))
             for i in rng.sample(range(n), k):
                 self.strip.setPixelColor(i, w)
+
+        # W3 Ambient-Glitzer (Phase-1-Entscheid: default AUS, 0.0 Sparkles/s):
+        # sehr duenner Dauer-Sternenstaub UEBER dem atmenden Rot. Eigener,
+        # kleiner Partikel-Pool (<= 12) mit denselben Huellkurven wie der
+        # Burst; Zombie-Doktrin: negative Alter werden entsorgt.
+        amb_rate = IRIS['stardust_ambient']
+        if amb_rate > 0.0 and not blind_on and lit and t >= 0.21:
+            amb = self.effect_params.setdefault('iris_ambient', [])
+            amb[:] = [p for p in amb if 0.0 <= t - p['birth'] < p['life']]
+            rng = self.effect_params.get('iris_rng') or random
+            if len(amb) < 12 and rng.random() < amb_rate * 0.02:
+                amb.append({
+                    'pos': rng.uniform(0.0, float(n)),
+                    'birth': t,
+                    'life': max(0.06, rng.uniform(0.08, 0.3)),
+                    'peak': 0.3 + 0.7 * iris_render.powerlaw_brightness(
+                        rng.random(), IRIS['stardust_powerlaw_k']),
+                    'rgb': iris_render.temp_to_rgb(rng.uniform(
+                        IRIS['stardust_temp_min'], IRIS['stardust_temp_max']))})
+            for pt in amb:
+                env = iris_render.spark_envelope(
+                    t - pt['birth'], pt['life'], IRIS['stardust_attack'])
+                if env <= 0.0:
+                    continue
+                # BEWUSST LUT-gedimmt: Ambient-Frames laufen mit Strip-LUT
+                # (kein Blinder-Frame) — eine Kompensation nach OBEN gibt es
+                # nicht (die Unsichtbar-Weiss-Lektion). Ergebnis ist ein
+                # leises Glimmen ueber dem Rot, kein Blinder-Weiss — genau
+                # die Rolle des Dauer-Layers.
+                w_a = pt['peak'] * env * IRIS['stardust_gain']
+                pr, pg, pb = pt['rgb']
+                for i, aa in iris_render.point_aa(pt['pos'], n):
+                    self._px_mix(i, pr, pg, pb, min(1.0, w_a * aa))
         if blind_on and bl.get('type') == 'meteor':
             # W2 METEOR: Kopf als Line-Integral (die im Frame ueberstrichene
             # Strecke — lueckenlos bei jeder Geschwindigkeit), Gauss-Bloom um
@@ -1748,23 +1859,7 @@ class LichtwerkWebController:
             profile = IRIS['meteor_profile']
             mt0 = bl['pre']
 
-            def _mix(i, wr_, wg_, wb_, w):
-                # Komponiert gegen den AKTUELLEN Puffer (Basis ist bereits
-                # gemalt) — ein Lerp gegen die berechnete Basis liesse jeden
-                # spaeteren Maler (Rueckwelle/Flash) den hellen Kopf wieder
-                # UEBERSCHREIBEN statt darueberzulegen (Feldbefund W2: die
-                # letzten 6 LEDs verloren den Kopf an die Rueckwelle).
-                if w <= 0.003:
-                    return
-                cur = self.strip.getPixelColor(i)
-                cr = (cur >> 16) & 0xFF
-                cg = (cur >> 8) & 0xFF
-                cb = cur & 0xFF
-                w = min(1.0, w)
-                self.strip.setPixelColor(i, Color(
-                    int(cr + (wr_ - cr) * w),
-                    int(cg + (wg_ - cg) * w),
-                    int(cb + (wb_ - cb) * w)))
+            _mix = self._px_mix
 
             hr_w, hg_w, hb_w = grad[0]
             for m in bl['meteors']:
@@ -1853,6 +1948,30 @@ class LichtwerkWebController:
                         dist_in = i if sign0 > 0 else (n - 1 - i)
                         w = fg * max(0.0, 1.0 - dist_in / (n * 0.5))
                         _mix(i, 255.0, 190.0, 120.0, w)
+            # Funkenflug (W3): Nachgluehen entlang der Bahn — jedes Teilchen
+            # mit eigener Attack/Decay-Huellkurve, Sub-Pixel-platziert.
+            for pt in bl.get('sparks_fx') or ():
+                env = iris_render.spark_envelope(
+                    bl_t - pt['birth'], pt['life'], IRIS['stardust_attack'])
+                if env <= 0.0:
+                    continue
+                w = pt['peak'] * env * IRIS['stardust_gain']
+                pr, pg, pb = pt['rgb']
+                for i, aa in iris_render.point_aa(pt['pos'], n):
+                    _mix(i, pr, pg, pb, w * aa)
+        elif blind_on and bl.get('type') == 'stardust':
+            # W3 STARDUST: Sternenstaub auf Schwarz (klassischer Blinder:
+            # Rot ist aus — der Kontrast macht das Funkeln). Partikel sind
+            # vorgeneriert; hier laeuft nur die Huellkurven-Schleife.
+            for pt in bl['parts']:
+                env = iris_render.spark_envelope(
+                    bl_t - pt['birth'], pt['life'], IRIS['stardust_attack'])
+                if env <= 0.0:
+                    continue
+                w = pt['peak'] * env * IRIS['stardust_gain']
+                pr, pg, pb = pt['rgb']
+                for i, aa in iris_render.point_aa(pt['pos'], n):
+                    self._px_mix(i, pr, pg, pb, w * aa)
         elif blind_on and bl.get('type') == 'sweep':
             # SWEEP (L6): ein warmweisser Lichtstreif rast von der
             # Startposition in eine Richtung — Gauss-Kopf wie die Welle,
@@ -2109,7 +2228,7 @@ def warn_event_evt():
     Queue-Kappe verwirft Bursts statt veralteter Blinder."""
     data = request.get_json() or {}
     kind = str(data.get('kind') or '')
-    if kind not in ('double', 'roll', 'accent', 'burst', 'sweep', 'shimmer', 'echo', 'meteor'):
+    if kind not in ('double', 'roll', 'accent', 'burst', 'sweep', 'shimmer', 'echo', 'meteor', 'stardust'):
         return jsonify({'status': 'ignored'})
 
     def _f(key, default, lo, hi):
