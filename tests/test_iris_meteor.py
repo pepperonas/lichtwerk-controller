@@ -141,7 +141,10 @@ def test_meteor_ducks_the_base_and_recovers():
     # freerun_jitter aus: der Meteor-Intake zieht aus der iris_rng — danach
     # wuerfelten die Laeufe VERSCHIEDENE Freilauf-Perioden und die Envelope-
     # Phasen truegen den Ratio-Vergleich davon (gemessen: 0.64 statt 0.35).
-    quiet = {"freerun_jitter": 0.0}
+    # meteor_duck EXPLIZIT 0.35: seit „weiss nur wenn rot aus" (2026-08-12)
+    # ist der DEFAULT 0.0 (Flug auf Schwarz) — hier wird der Duck-MECHANISMUS
+    # samt LUT-Kompensation geprueft, nicht der Default.
+    quiet = {"freerun_jitter": 0.0, "meteor_duck": 0.35}
     # Warmup 24 Frames: die Schatten-Kohorte muss VOR dem Event gespawnt
     # sein — der Intake zieht aus der iris_rng, und eine NACH dem Event
     # gewuerfelte Kohorte macht die Glut-Karten der Laeufe unvergleichbar
@@ -206,3 +209,20 @@ def test_meteor_disabled_ignores_the_event():
     a, bri_a = _run(ev, 40, cfg={"meteor_enabled": False})
     b, bri_b = _run(None, 40, cfg={"meteor_enabled": False})
     assert a == b and bri_a == bri_b
+
+
+def test_meteor_default_flies_on_black():
+    """2026-08-12 („weiss nur wenn rot aus"): Default meteor_duck = 0.0 —
+    der Pre-Dip blendet das Rot komplett aus, der Flug laeuft auf SCHWARZ
+    (fern von Kopf/Schweif kein Rot), Recover bringt es zurueck."""
+    assert wc.IRIS["meteor_duck"] == 0.0, "Default ist Flug auf Schwarz"
+    ev = {"kind": "meteor", "gap": 0.16, "n": 1, "dur": 0.0, "v": 1200.0,
+          "intensity": 1.0, "density": 1.0, "origin": 0.5, "dir": 1}
+    quiet = {"freerun_jitter": 0.0}
+    a, bri_a = _run(ev, 90, cfg=quiet, warmup=24)
+    b, bri_b = _run(None, 90, cfg=quiet, warmup=24)
+    k = 30                     # mitten im Flug; px 5 liegt fern von Schweif
+    assert a[k][5] == 0, "Basis fern vom Meteor muss SCHWARZ sein (rot aus)"
+    assert b[k][5] != 0, "im Vergleichslauf atmet dort das Rot"
+    assert a[-1] == b[-1] and bri_a[-1] == bri_b[-1], \
+        "nach dem Recover ist das Rot bit-genau zurueck"

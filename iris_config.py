@@ -143,7 +143,10 @@ DEFAULTS = {
     "meteor_trail_s": 0.08,
     "meteor_jitter": 0.10,     # per-Pixel-Glut-Koernung im Schweif (5-15 %)
     "meteor_head_gain": 1.0,   # absolut (Blinder-Stromklasse), wie sparkle
-    "meteor_duck": 0.35,       # Basis-Rot im Flug (Ducking statt Clipping)
+    # 2026-08-12 („weiss nur wenn rot aus"): Flug auf SCHWARZ — der Pre-Dip
+    # wird zum Fade-to-Black-Auftakt, Recover blendet das Rot zurueck.
+    # > 0 = das alte Ducking (Rot glimmt unter dem Meteor weiter).
+    "meteor_duck": 0.0,
     "meteor_pre_dip_s": 0.12,  # "Einatmen" 80-150 ms vor dem Start
     "meteor_recover_s": 0.25,  # Rot-Rueckkehr nach dem Impact
     "meteor_impact": True,     # Impact-Flash am Strip-Ende
