@@ -67,6 +67,8 @@ RANGES = {
     "sweep_span": (60, 600),
     "shimmer_px": (6, 80),
     "shimmer_gain": (0.1, 1.0),
+    "white_max_spots": (0, 80),
+    "white_max_px": (0, 400),
     "variant_dur_min": (0.06, 0.5),
     "variant_dur_max": (0.2, 1.5),
     # Meteor (W2)
@@ -227,6 +229,17 @@ DEFAULTS = {
     "accent_pulse": 0.16,
     "accent_spots": 26,
     "drop_spots": 24,
+
+    # Weiss-Budget (2026-08-13): harte Sparse-Stromklasse fuer ALLE
+    # Weiss-Effekte. Die Detektor-Formen (16-26 Cluster) sind die erprobte
+    # Klasse, in der Warmweiss ehrlich bleibt; density-skalierte Picker-
+    # Events (burst/echo bis x1,5) rissen darueber hinaus und kippten
+    # GELBLICH (5-V-Sack, blaue Die verhungert). 0 = Waechter aus
+    # (Rollback = exakt das Vorverhalten).
+    "white_max_spots": 26,  # max Cluster je Sparkle-Plan (= accent, groesste
+                            # abgenommene Form — Bestand bleibt bit-identisch)
+    "white_max_px": 130,    # absolute LED-Obergrenze je Weiss-Plan/Frame
+                            # (26 Cluster x max 5 = erlaubter Bestands-Worst-Case)
 
     # Weiss-Varianten (L6): Sweep = rasender Lichtstreif, Shimmer = Flirren
     "sweep_width": 14,      # Gauss-Halbbreite des Sweep-Kopfs (LEDs)

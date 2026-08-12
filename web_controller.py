@@ -1218,10 +1218,23 @@ class LichtwerkWebController:
             # Cluster-Positionen fuer den Sparkle-Blinder: `count` Zentren,
             # 2-5 LEDs breit, individuelle Helligkeit — der Glitzer-Look.
             # Zufall NUR aus der seedbaren Effekt-RNG (L1).
+            # ⚠️ WEISS-BUDGET (2026-08-13): die abgenommenen Detektor-Formen
+            # laufen mit 16-26 Clustern (Sparse-Klasse: winzige Last -> kein
+            # 5-V-Sack -> ehrliches Warmweiss). Die Picker-Events skalieren
+            # mit density bis 1,5 auf bis zu 39 Cluster (~195 LEDs) — genau
+            # dort kippte Weiss GELBLICH (Nutzerbefund: die blaue Die
+            # verhungert zuerst). Kappen auf die erprobte Klasse; Formen
+            # innerhalb des Budgets bleiben bit-identisch. 0 = Waechter aus.
+            max_spots = int(IRIS.get('white_max_spots', 0) or 0)
+            if max_spots > 0:
+                count = min(int(count), max_spots)
+            max_px = int(IRIS.get('white_max_px', 0) or 0)
             rng = self.effect_params.get('iris_rng') or random
             npx = self.strip.numPixels()
             spots = []
             for _ in range(count):
+                if max_px > 0 and len(spots) >= max_px:
+                    break
                 centre = rng.randrange(npx)
                 width = rng.choice((2, 3, 3, 4, 5))
                 bri = 0.6 + rng.random() * 0.4
@@ -2057,6 +2070,9 @@ class LichtwerkWebController:
                 gv, frac = 0.0, 0.0
             if gv > 0.01:
                 count = max(2, int(IRIS['shimmer_px'] * bl.get('density', 1.0) * frac))
+                _wmax = int(IRIS.get('white_max_px', 0) or 0)
+                if _wmax > 0:
+                    count = min(count, _wmax)    # Weiss-Budget (Sparse-Klasse)
                 sr, sg, sb = IRIS['sparkle_r'], IRIS['sparkle_g'], IRIS['sparkle_b']
                 for i in rng.sample(range(n), min(n, count)):
                     v = gv * (0.5 + rng.random() * 0.5)

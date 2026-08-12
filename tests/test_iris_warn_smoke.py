@@ -485,3 +485,51 @@ def test_red_envelope_baseline_config_restores_the_old_curve():
         assert 0.42 < mean < 0.62      # das alte Energie-Budget
     finally:
         wc.apply_iris_config(None)
+
+
+def test_white_budget_caps_dense_picker_events_but_not_approved_forms():
+    """Weiss-Budget (2026-08-13, Nutzerbefund 'zu viele weisse LEDs ->
+    gelblich'): density-skalierte Picker-Events (burst/echo bis x1,5 =
+    bis 39 Cluster ~195 LEDs) rissen ueber die erprobte Sparse-Klasse
+    hinaus — dort sackt die 5-V-Schiene und Weiss kippt gelb. Der Waechter
+    kappt auf die abgenommene Klasse (26 Cluster / 130 LEDs); die
+    Detektor-Formen (density 1.0, 16-26 Cluster) bleiben unangetastet
+    (zusaetzlich vom Golden-Frame-Test bewiesen)."""
+    import iris_config
+    c = fresh()
+    run_frames(c, 4)
+    # burst mit maximaler Dichte: ohne Cap waeren es int(26*1.5)=39 Cluster
+    c.effect_params.setdefault('iris_events', []).append(
+        {'kind': 'burst', 'density': 1.5, 'intensity': 1.0})
+    run_frames(c, 2)
+    bl = c.effect_params.get('iris_blinder')
+    assert bl and bl.get('spots'), "burst muss einen Sparkle-Plan anlegen"
+    leds = len(bl['spots'][0])
+    assert leds <= 130, f"Weiss-Budget gerissen: {leds} LEDs (> 130)"
+    # Cluster-Zaehlung indirekt: 26 Cluster x max 5 LEDs = 130; ein
+    # ungekappter 39er-Plan laege im Mittel bei ~133 und wuerde die
+    # Grenze regelmaessig reissen — hier zusaetzlich der Erwartungsbereich.
+    assert leds >= 26, "Plan darf nicht leer/degeneriert sein"
+    run_frames(c, 40)
+    # echo mit maximaler Dichte ebenso
+    c.effect_params.setdefault('iris_events', []).append(
+        {'kind': 'echo', 'density': 1.5, 'gap_ms': 150})
+    run_frames(c, 2)
+    bl2 = c.effect_params.get('iris_blinder')
+    assert bl2 and len(bl2['spots'][0]) <= 130
+    # Waechter aus (white_max_spots/px = 0) = Vorverhalten: der dichte
+    # burst darf dann GROESSER ausfallen (Rollback-Pfad bleibt beweisbar).
+    old_spots, old_px = wc.IRIS['white_max_spots'], wc.IRIS['white_max_px']
+    try:
+        wc.IRIS['white_max_spots'] = 0
+        wc.IRIS['white_max_px'] = 0
+        run_frames(c, 40)
+        c.effect_params.setdefault('iris_events', []).append(
+            {'kind': 'burst', 'density': 1.5, 'intensity': 1.0})
+        run_frames(c, 2)
+        bl3 = c.effect_params.get('iris_blinder')
+        assert bl3 and len(bl3['spots'][0]) > 100, \
+            "ohne Waechter muss der 39-Cluster-Plan wieder moeglich sein"
+    finally:
+        wc.IRIS['white_max_spots'] = old_spots
+        wc.IRIS['white_max_px'] = old_px
