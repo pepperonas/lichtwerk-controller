@@ -162,6 +162,55 @@ def iris_engage_window(rng, variety):
     return (a, a + rng.uniform(0.045, 0.075))
 
 
+def iris_wave_spawn(rng, s, variety):
+    """L3: Wellen-Descriptor je Kick (`born` setzt der Aufrufer).
+
+    Baseline (variety=False): das Legacy-Dict {'s'} — Malpfad-Fallbacks
+    (of 0.5, dir 0, v/width aus s) reproduzieren die alte Welle bit-genau.
+    Mit Variety: Ursprung Mitte-bias gewuerfelt (Gauss sigma 0.18, geklemmt
+    0.08..0.92 — nie AN der Kante, nie fix), Richtung 50 % beidseitig /
+    je 25 % links/rechts, Tempo ±~17 %, Breite -20..+25 %.
+    """
+    if not variety:
+        return {'s': s}
+    of = max(0.08, min(0.92, 0.5 + rng.gauss(0.0, 0.18)))
+    r = rng.random()
+    direction = 0 if r < 0.5 else (1 if r < 0.75 else -1)
+    return {'s': s, 'of': of, 'dir': direction,
+            'v': (520.0 + 780.0 * s) * rng.uniform(0.85, 1.2),
+            'width': (12.0 + 24.0 * s) * rng.uniform(0.8, 1.25)}
+
+
+def iris_wave_speed(w):
+    """Effektive Wellen-Geschwindigkeit (LED/s) — Legacy-Fallback aus s."""
+    return w.get('v') or (520.0 + 780.0 * w['s'])
+
+
+def iris_wave_reach(w, n):
+    """Lauf-Distanz, nach der die Welle den Strip verlassen hat (+Puffer).
+
+    Legacy (of 0.5, dir 0) = n/2 + 60 — exakt die alte Prune-Formel.
+    Einseitige Wellen sterben frueher/spaeter, je nachdem wie viel Strip
+    in ihrer Richtung liegt.
+    """
+    of = w.get('of', 0.5)
+    direction = w.get('dir', 0)
+    if direction > 0:
+        base = (1.0 - of) * n
+    elif direction < 0:
+        base = of * n
+    else:
+        base = max(of, 1.0 - of) * n
+    return base + 60.0
+
+
+def iris_spark_window(rng, variety):
+    """L3: Dauer des Funkenfensters je Schlag — Baseline exakt 55 ms."""
+    if not variety:
+        return 0.055
+    return rng.uniform(0.04, 0.08)
+
+
 app = Flask(__name__)
 CORS(app)
 
@@ -1111,7 +1160,8 @@ class LichtwerkWebController:
             if t - self.effect_params.get('iris_last_snap', -9.0) >= IRIS['snap_refractory']:
                 self.effect_params['iris_last_snap'] = t
                 snap = True
-            self.effect_params['iris_spark_until'] = t + 0.055
+            self.effect_params['iris_spark_until'] = t + iris_spark_window(
+                self.effect_params.get('iris_rng') or random, IRIS['wave_variety'])
             self.effect_params['iris_kick_boost'] = ks
             avg = self.effect_params.get('iris_kick_avg', 0.0)
             self.effect_params['iris_kick_avg'] = avg + (ks - avg) * 0.15
@@ -1127,7 +1177,10 @@ class LichtwerkWebController:
                     'win': ((0.0, 0.07, 1.0), (0.13, 0.22, 1.0), (0.30, 0.40, 0.7)),
                     'spots': (sp, sp, sp)}
             waves = self.effect_params['iris_waves']
-            waves.append({'born': t, 's': ks})
+            wv = iris_wave_spawn(self.effect_params.get('iris_rng') or random,
+                                 ks, IRIS['wave_variety'])
+            wv['born'] = t
+            waves.append(wv)
             if len(waves) > 3:
                 waves.pop(0)
 
@@ -1299,7 +1352,8 @@ class LichtwerkWebController:
             if prev_u is not None and u < prev_u - 0.5:
                 # Perioden-Wrap = Schlagmoment -> Funkenfenster (Freilauf;
                 # echte Kicks armieren es ohnehin im Intake)
-                self.effect_params['iris_spark_until'] = t + 0.055
+                self.effect_params['iris_spark_until'] = t + iris_spark_window(
+                self.effect_params.get('iris_rng') or random, IRIS['wave_variety'])
                 if freerun_now and IRIS['freerun_jitter'] > 0.0:
                     rng = self.effect_params.get('iris_rng') or random
                     self.effect_params['iris_freerun_f'] = iris_freerun_walk(
@@ -1311,7 +1365,8 @@ class LichtwerkWebController:
         last = self.effect_params.get('iris_lit')
         if lit and last is not True:
             # Rising edge → arm a ~55 ms white-spark window
-            self.effect_params['iris_spark_until'] = t + 0.055
+            self.effect_params['iris_spark_until'] = t + iris_spark_window(
+                self.effect_params.get('iris_rng') or random, IRIS['wave_variety'])
         spark = bool(lit and t < float(self.effect_params.get('iris_spark_until') or 0))
         last_spark = self.effect_params.get('iris_sparking')
 
@@ -1321,7 +1376,8 @@ class LichtwerkWebController:
         if waves:
             now_m = mono()
             waves = [w for w in waves
-                     if (t - w['born']) * (520.0 + 780.0 * w['s']) < self.strip.numPixels() / 2 + 60]
+                     if (t - w['born']) * iris_wave_speed(w)
+                     < iris_wave_reach(w, self.strip.numPixels())]
             self.effect_params['iris_waves'] = waves
             if not waves and last is lit and last_spark is spark:
                 return
@@ -1463,19 +1519,26 @@ class LichtwerkWebController:
             # (gruene Die ~2x Luminanz je Duty — iris_wash.WHITE_POINT-Physik).
             wr, wg, wb = 255, 105, 25    # ember core, tief orange — bin-streuungsfest
             xr, xg, xb = 255, 110, 80    # hot red halo
-            centre = n / 2.0
-            half = centre
+            half = n / 2.0
             for w in waves:
                 age = t - w['born']
-                v = 520.0 + 780.0 * w['s']            # LED/s — harder kicks race faster
+                v = iris_wave_speed(w)                # LED/s — harder kicks race faster
                 dist = age * v
-                width = 12.0 + 24.0 * w['s']
+                width = w.get('width') or (12.0 + 24.0 * w['s'])
+                # L3: Ursprung + Richtung je Welle (Legacy: Mitte, beidseitig)
+                centre = w.get('of', 0.5) * n
+                direction = w.get('dir', 0)
                 cool = max(0.0, 1.0 - (dist / max(1.0, half)) * 0.45)
-                lo = max(0, int(centre - dist - width * 3))
-                hi = min(n - 1, int(centre + dist + width * 3))
+                lo = max(0, int(centre - (dist if direction <= 0 else 0) - width * 3))
+                hi = min(n - 1, int(centre + (dist if direction >= 0 else 0) + width * 3))
                 cw = width * 0.45
                 for i in range(lo, hi + 1):
-                    d = abs(abs(i - centre) - dist)
+                    arm = i - centre
+                    if direction > 0 and arm < 0:
+                        continue
+                    if direction < 0 and arm > 0:
+                        continue
+                    d = abs(abs(arm) - dist)
                     if d > width * 3:
                         continue
                     halo = cool * w['s'] * (2.718281828 ** (-(d * d) / (2.0 * width * width)))

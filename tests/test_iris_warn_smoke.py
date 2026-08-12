@@ -194,10 +194,11 @@ def test_shadow_zombies_are_pruned_and_fresh_cohort_is_visible_immediately():
 
 GOLDEN_FRAME_HASH = "a38f6cdb0b2100c4fb11090ecba036ef745f80c31fb0fc6490df238564f6f446"
 
-# L2-Schalter auf Baseline: red_punch aus, kein Freilauf-Jitter, festes
-# Engage-Timing — damit bleibt der Original-Hash der Rollback-Beweis.
+# L2/L3-Schalter auf Baseline: red_punch aus, kein Freilauf-Jitter, festes
+# Engage-Timing, Wellen immer Mitte/beidseitig/55-ms-Funken — damit bleibt
+# der Original-Hash der Rollback-Beweis.
 BASELINE_OFF = {"red_punch": 0.0, "freerun_jitter": 0.0,
-                "engage_variety": False}
+                "engage_variety": False, "wave_variety": False}
 
 def _golden_run(extra_cfg):
     import hashlib
@@ -351,3 +352,84 @@ def test_engage_window_variety_and_baseline():
     for a, b in wins:
         assert 0.03 <= a < b <= 0.20
         assert 0.04 <= b - a <= 0.08
+
+
+def test_wave_spawn_variety_and_legacy_baseline():
+    """L3 (pure): Baseline = Legacy-Dict {'s'} (Malpfad-Fallbacks = alte
+    Welle); Variety wuerfelt Ursprung (nie an der Kante, nie fix),
+    Richtung (beid-/einseitig gemischt) und Tempo/Breite im Band."""
+    import random as _r
+    assert wc.iris_wave_spawn(_r.Random(1), 0.8, False) == {"s": 0.8}
+    rng = _r.Random(7)
+    dirs, origins = set(), set()
+    for _ in range(300):
+        w = wc.iris_wave_spawn(rng, 0.8, True)
+        assert 0.08 <= w["of"] <= 0.92
+        assert w["dir"] in (-1, 0, 1)
+        base_v, base_w = 520.0 + 780.0 * 0.8, 12.0 + 24.0 * 0.8
+        assert base_v * 0.85 - 1e-6 <= w["v"] <= base_v * 1.2 + 1e-6
+        assert base_w * 0.8 - 1e-6 <= w["width"] <= base_w * 1.25 + 1e-6
+        dirs.add(w["dir"])
+        origins.add(round(w["of"], 3))
+    assert dirs == {-1, 0, 1}, "alle Richtungen muessen vorkommen"
+    assert len(origins) > 200, "Ursprung darf nicht fix sein"
+
+
+def test_wave_reach_and_speed_legacy_and_directional():
+    """L3 (pure): Legacy-Welle stirbt exakt bei n/2+60 (alte Prune-Formel);
+    einseitige Wellen leben so lange, wie Strip in ihrer Richtung liegt."""
+    legacy = {"s": 0.5}
+    assert wc.iris_wave_reach(legacy, 600) == 360.0            # n/2 + 60
+    assert wc.iris_wave_speed(legacy) == 520.0 + 780.0 * 0.5
+    assert wc.iris_wave_reach({"s": 1, "of": 0.2, "dir": 1}, 600) == 540.0
+    assert wc.iris_wave_reach({"s": 1, "of": 0.2, "dir": -1}, 600) == 180.0
+    assert wc.iris_wave_reach({"s": 1, "of": 0.2, "dir": 0}, 600) == 540.0
+    assert wc.iris_wave_speed({"s": 1, "v": 777.0}) == 777.0
+
+
+def test_spark_window_baseline_and_jitter():
+    import random as _r
+    assert wc.iris_spark_window(_r.Random(1), False) == 0.055
+    vals = {wc.iris_spark_window(_r.Random(s), True) for s in range(100)}
+    assert all(0.04 <= v <= 0.08 for v in vals)
+    assert len(vals) > 50
+
+
+def test_one_sided_wave_paints_only_its_arm():
+    """L3 (Verhalten): eine dir=+1-Welle bei of=0.2 laesst die linke
+    Strip-Seite unangetastet. Die Basis atmet selbst (red_env + Glut) —
+    der Wellen-Beitrag ist darum die DIFFERENZ zweier deterministischer
+    Laeufe (gleicher Seed, gleiche Fake-Uhr), einmal mit, einmal ohne."""
+    def run(with_wave):
+        state = {"t": 100.0}
+        c = fresh(FakeStrip(600))
+        c.iris_clock = lambda: state["t"]
+        wc.apply_iris_config({"seed": 9})
+        try:
+            frames = []
+            for _ in range(12):
+                state["t"] += 0.021
+                c.effect_iris_warn()
+            if with_wave:
+                # born in EFFEKT-relativer Zeit (t = uhr - iris_t0) — eine
+                # absolute Zeit waere ein unsichtbarer Zombie (Doktrin).
+                rel_now = state["t"] - c.effect_params["iris_t0"]
+                c.effect_params["iris_waves"] = [
+                    {"born": rel_now, "s": 0.9, "of": 0.2, "dir": 1,
+                     "v": 900.0, "width": 20.0}]
+            for _ in range(4):
+                state["t"] += 0.021
+                c.effect_iris_warn()
+                frames.append(list(c.strip._px))
+            return frames
+        finally:
+            wc.apply_iris_config(None)
+            del c.iris_clock
+
+    plain, waved = run(False), run(True)
+    changed = sorted({i for a, b in zip(plain, waved)
+                      for i in range(600) if a[i] != b[i]})
+    assert changed, "die Welle muss sichtbar malen"
+    assert min(changed) >= int(0.2 * 600) - 1, \
+        f"links vom Ursprung darf nichts passieren (min={min(changed)})"
+    assert max(changed) > int(0.2 * 600) + 20, "rechter Arm muss laufen"

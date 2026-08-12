@@ -90,6 +90,10 @@ DEFAULTS = {
     # L2: Engage-Doppelpuls-Timing variiert je Warn-Flanke (False = immer
     # exakt 70/60/80 ms = Baseline).
     "engage_variety": True,
+    # L3: Wellen-Vielfalt — Ursprung Mitte-bias gewuerfelt (nie fix),
+    # Richtung beid-/einseitig, Breite/Tempo-Jitter, Funkenfenster 40-80 ms
+    # statt exakt 55 ms (False = Baseline: immer Mitte, beidseitig, 55 ms).
+    "wave_variety": True,
 
     # Takt: Freilauf-Periode + Klemmen + Tempo-Lock-Glaettung
     "period_freerun": 0.55,
