@@ -45,6 +45,9 @@ class FakeStrip:
     def setPixelColor(self, i, c):
         self._px[i] = c
 
+    def getPixelColor(self, i):
+        return self._px[i]
+
     def fill(self, c):
         self._px = [c] * self._n
 

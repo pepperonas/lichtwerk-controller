@@ -13,6 +13,7 @@ try:
 except ImportError:
     from rpi_ws281x import PixelStrip, Color
 import iris_wash
+import iris_render
 import math
 import random
 
@@ -217,6 +218,88 @@ def iris_spark_window(rng, variety):
     if not variety:
         return 0.055
     return rng.uniform(0.04, 0.08)
+
+
+def _meteor_v1_factor(profile):
+    """End-/Start-Geschwindigkeits-Verhaeltnis je Profil.
+
+    expo_out = Whip: schnell herein, klar verlangsamend — aber nie unter
+    45 % von v0 (ein klassisches expo-out kriecht am Ende, der Meteor muss
+    den Strip ENTSCHLOSSEN verlassen). accel zieht leicht an.
+    """
+    return {'const': 1.0, 'accel': 1.25}.get(profile, 0.45)
+
+
+def iris_meteor_pos(t, v0, dur, profile):
+    """Kopf-Weg (LED ab Start) zur Zeit t — analytisch, delta-time.
+
+    Geschwindigkeit laeuft linear von v0 auf v0*faktor ueber `dur`
+    (integriert = Quadratik); NACH dur faehrt der Kopf mit Endtempo weiter,
+    damit der Schweif hinausgleitet statt eingefroren stehenzubleiben.
+    """
+    v1 = v0 * _meteor_v1_factor(profile)
+    if t <= 0.0:
+        return 0.0
+    if t <= dur:
+        return v0 * t + (v1 - v0) * t * t / (2.0 * dur)
+    return (v0 + v1) * dur / 2.0 + v1 * (t - dur)
+
+
+def iris_meteor_dur(dist, v0, profile):
+    """Flugdauer fuer `dist` LEDs (Mitteltempo des linearen Profils)."""
+    v1 = v0 * _meteor_v1_factor(profile)
+    return dist / max(1.0, (v0 + v1) / 2.0)
+
+
+def iris_meteor_time_for(x, v0, dur, profile):
+    """Zeitpunkt, an dem der Kopf den Weg `x` erreicht (Umkehrfunktion).
+
+    Quadratik aufgeloest; jenseits von dur linear weiter. Fuer den
+    vorberechneten Impact-Zeitpunkt (Kopf verlaesst den Strip).
+    """
+    v1 = v0 * _meteor_v1_factor(profile)
+    end = (v0 + v1) * dur / 2.0
+    if x <= 0.0:
+        return 0.0
+    if x >= end:
+        return dur + (x - end) / max(1.0, v1)
+    a = (v1 - v0) / (2.0 * dur)
+    if abs(a) < 1e-9:
+        return x / v0
+    disc = v0 * v0 + 4.0 * a * x
+    return (-v0 + disc ** 0.5) / (2.0 * a)
+
+
+def iris_meteor_duck(bl_t, pre, flight_end, duck, recover):
+    """Duck-Faktor der roten Basis waehrend eines Meteor-Plans.
+
+    Pre-Dip: Smoothstep 1.0 -> duck ueber die `pre`-Phase (das "Einatmen");
+    im Flug konstant duck; nach flight_end Smoothstep zurueck auf 1.0 ueber
+    `recover`. Stetig an allen Uebergaengen — die Basis darf nie springen.
+    """
+    if bl_t <= 0.0:
+        return 1.0
+    if bl_t < pre:
+        f = bl_t / pre
+        s = f * f * (3.0 - 2.0 * f)
+        return 1.0 + (duck - 1.0) * s
+    if bl_t < flight_end:
+        return duck
+    f = min(1.0, (bl_t - flight_end) / max(1e-6, recover))
+    s = f * f * (3.0 - 2.0 * f)
+    return duck + (1.0 - duck) * s
+
+
+def iris_meteor_jitter(pixel, seed):
+    """Deterministische Glut-Koernung des Schweifs: -1..1 je (Pixel, Seed).
+
+    Hash-Rauschen mit u32-Maske — die usize-Falle aus dem Beat-Detektor:
+    ohne Maske wird das 'Rauschen' eine riesige In-Band-Rampe.
+    """
+    h = (pixel * 2654435761 + seed * 40503) & 0xffffffff
+    h ^= h >> 13
+    h = (h * 1274126177) & 0xffffffff
+    return ((h >> 8) & 0xffff) / 32767.5 - 1.0
 
 
 app = Flask(__name__)
@@ -1213,6 +1296,52 @@ class LichtwerkWebController:
             dens = float(ev.get('density', 1.0) or 1.0)
             dur = float(ev.get('dur', 0.0) or 0.0)
             # L6-Varianten: eigener Plan-Typ, gleiche Scheduler-Mechanik
+            if kind == 'meteor':
+                # W2: rasender Weiss-Kopf mit Schweif. Der Plan traegt ALLES
+                # vorberechnet (Dauern, Exit-Zeiten) — der Malpfad ist reine
+                # Funktion von t. mode='duck': erste Plan-Art, die das Rot
+                # NICHT abschaltet, sondern gedimmt weiterlaufen laesst.
+                if not IRIS['meteor_enabled']:
+                    continue
+                rng = self.effect_params.get('iris_rng') or random
+                n_px = self.strip.numPixels()
+                sign = 1 if ev.get('dir', 1) >= 0 else -1
+                count = max(1, min(int(IRIS['meteor_max_concurrent']),
+                                   int(ev.get('n', 1) or 1)))
+                profile = IRIS['meteor_profile']
+                pre = IRIS['meteor_pre_dip_s']
+                v_req = float(ev.get('v', 0.0) or 0.0)
+                meteors, first_exit, flight_end = [], None, 0.0
+                for k in range(count):
+                    v0 = (max(IRIS['meteor_v_min'],
+                              min(IRIS['meteor_v_max'], v_req))
+                          if v_req > 0.0 else
+                          rng.uniform(IRIS['meteor_v_min'], IRIS['meteor_v_max']))
+                    delay = 0.0 if k == 0 else rng.uniform(0.08, 0.24)
+                    efold = v0 * IRIS['meteor_trail_s']
+                    dist = n_px + 3.0 * efold + 12.0   # bis der Schweif draussen ist
+                    dur = iris_meteor_dur(dist, v0, profile)
+                    exit_t = iris_meteor_time_for(n_px + 6.0, v0, dur, profile)
+                    meteors.append({
+                        'v0': v0, 'dur': dur, 'delay': delay, 'sign': sign,
+                        'start': -3.0 if sign > 0 else n_px + 3.0,
+                        'efold': efold, 'seed': k + 1,
+                        'gain': inten * rng.uniform(0.8, 1.0),
+                        'last_pos': None})
+                    exit_abs = pre + delay + exit_t
+                    first_exit = exit_abs if first_exit is None else min(first_exit, exit_abs)
+                    flight_end = max(flight_end, pre + delay + dur)
+                self.effect_params['iris_blinder'] = {
+                    't0': t, 'type': 'meteor', 'mode': 'duck',
+                    'win': ((0.0, flight_end + IRIS['meteor_recover_s'], 1.0),),
+                    'pre': pre, 'flight_end': flight_end,
+                    'impact_at': first_exit if IRIS['meteor_impact'] else None,
+                    'launch_at': pre if IRIS['meteor_launch'] else None,
+                    'meteors': meteors}
+                print(f"warn_event angenommen: meteor n={count} "
+                      f"v={'/'.join(str(int(m['v0'])) for m in meteors)} "
+                      f"dir={sign} dauer={flight_end:.2f}s", flush=True)
+                continue
             if kind == 'sweep':
                 self.effect_params['iris_blinder'] = {
                     't0': t, 'type': 'sweep',
@@ -1331,6 +1460,18 @@ class LichtwerkWebController:
             else:
                 self.effect_params['iris_blinder'] = None
         blind_on = blinder is not None   # Plan aktiv (inkl. Pausen + Glimmen)
+        # W2: Meteor-Plaene DUCKEN das Rot statt es abzuschalten (erste
+        # Plan-Art mit mode='duck'). duck_f traegt die LUT-Kompensation:
+        # Blinder-Frames laufen LUT-neutral (Weiss braucht die absolute
+        # Stromklasse), also muss die Basis um led_brightness/255 herunter —
+        # sonst spraenge ihre Helligkeit an den Plan-Grenzen.
+        meteor_on = blind_on and bl.get('type') == 'meteor'
+        duck_f = 1.0
+        if meteor_on:
+            duck_f = iris_meteor_duck(
+                bl_t, bl['pre'], bl['flight_end'],
+                IRIS['meteor_duck'], IRIS['meteor_recover_s']) \
+                * (self.strip_lut_default / 255.0)
 
         # ── Engage: two hard pulses (Aufleuchten) ──
         # ON 70ms · OFF 60ms · ON 80ms, then sustain
@@ -1368,7 +1509,9 @@ class LichtwerkWebController:
                         self.effect_params.get('iris_freerun_f', 1.0),
                         IRIS['freerun_jitter'], rng.uniform(-1.0, 1.0))
 
-        if blinder is not None:
+        if blinder is not None and not meteor_on:
+            # Klassische Blinder: Rot AUS in Dunkelfenstern. Meteor-Plaene
+            # lassen lit stehen — ihre Basis laeuft geduckt weiter.
             lit = blinder[0]
         last = self.effect_params.get('iris_lit')
         if lit and last is not True:
@@ -1456,7 +1599,7 @@ class LichtwerkWebController:
             return
 
         glow_tbl = None
-        if t >= 0.21 and lit and not blind_on:
+        if t >= 0.21 and lit and (not blind_on or meteor_on):
             # Schattenzonen-Lebenszyklus: abgelaufene ersetzen (an neuer,
             # zufaelliger Position mit neuer Breite/Tiefe/Drift) — der Bestand
             # bleibt bei IRIS['shadow_count'], gestaffelt durch zufaellige Leben.
@@ -1486,6 +1629,8 @@ class LichtwerkWebController:
             glow_tbl = [iris_glow_factor(b + 1.5, t)
                         * iris_shadow_field(b + 1.5, pockets, t)
                         for b in range(0, n, 4)]
+        # duck_f ist 1.0 ausserhalb von Meteor-Plaenen (x*1.0 == x, bit-exakt).
+        red_env *= duck_f
         c = Color(int(hr * scale * red_env), int(hg * scale * red_env), int(hb * scale * red_env))
         dark = Color(0, 0, 0)
         # SPARKLE-Blinder (Nutzerentscheid 2026-08-10, ersetzt das
@@ -1499,7 +1644,7 @@ class LichtwerkWebController:
         # Last -> keine Drift, hohe Duty -> Binning ertrinkt, fast echtes
         # Warmweiss; der Schwarz-Kontrast macht den Blitz. Vollflaechen-
         # Kaltweiss braucht beidseitige Stromeinspeisung (Hardware).
-        base = dark if blind_on else (c if lit else dark)
+        base = dark if (blind_on and not meteor_on) else (c if lit else dark)
         if glow_tbl is not None:
             # Rot atmet zeitlich (red_env) UND wandert raeumlich (glow_tbl)
             sc = scale * red_env
@@ -1587,7 +1732,128 @@ class LichtwerkWebController:
             rng = random.Random(int(t0 * 1000) ^ int(t * 200))
             for i in rng.sample(range(n), k):
                 self.strip.setPixelColor(i, w)
-        if blind_on and bl.get('type') == 'sweep':
+        if blind_on and bl.get('type') == 'meteor':
+            # W2 METEOR: Kopf als Line-Integral (die im Frame ueberstrichene
+            # Strecke — lueckenlos bei jeder Geschwindigkeit), Gauss-Bloom um
+            # die Kopfposition, Schweif exponentiell im LINEAREN Licht
+            # (perceptual-Encode) mit Glut-Koernung + Temperatur-Gradient.
+            # Alles Replace-Blend auf die GEDUCKTE Basis (kein Clipping).
+            if 'grad' not in bl:
+                # Temperatur-Gradient einmal je Plan vorberechnen (32 Stufen)
+                h_t, t_t = IRIS['meteor_head_temp'], IRIS['meteor_tail_temp']
+                bl['grad'] = [iris_render.temp_to_rgb(h_t + (t_t - h_t) * k / 31.0)
+                              for k in range(32)]
+            grad = bl['grad']
+            gj = IRIS['meteor_jitter']
+            profile = IRIS['meteor_profile']
+            mt0 = bl['pre']
+
+            def _mix(i, wr_, wg_, wb_, w):
+                # Komponiert gegen den AKTUELLEN Puffer (Basis ist bereits
+                # gemalt) — ein Lerp gegen die berechnete Basis liesse jeden
+                # spaeteren Maler (Rueckwelle/Flash) den hellen Kopf wieder
+                # UEBERSCHREIBEN statt darueberzulegen (Feldbefund W2: die
+                # letzten 6 LEDs verloren den Kopf an die Rueckwelle).
+                if w <= 0.003:
+                    return
+                cur = self.strip.getPixelColor(i)
+                cr = (cur >> 16) & 0xFF
+                cg = (cur >> 8) & 0xFF
+                cb = cur & 0xFF
+                w = min(1.0, w)
+                self.strip.setPixelColor(i, Color(
+                    int(cr + (wr_ - cr) * w),
+                    int(cg + (wg_ - cg) * w),
+                    int(cb + (wb_ - cb) * w)))
+
+            hr_w, hg_w, hb_w = grad[0]
+            for m in bl['meteors']:
+                tm = bl_t - mt0 - m['delay']
+                if tm <= 0.0:
+                    continue
+                pos = m['start'] + m['sign'] * iris_meteor_pos(
+                    tm, m['v0'], m['dur'], profile)
+                prev = m['last_pos'] if m['last_pos'] is not None else pos
+                m['last_pos'] = pos
+                g = IRIS['meteor_head_gain'] * m['gain']
+                # Kopf-Strecke des Frames (Motion-Blur, Randpixel anteilig)
+                for i, wgt in iris_render.line_coverage(prev, pos, n):
+                    _mix(i, hr_w, hg_w, hb_w, g * min(1.0, wgt))
+                # Bloom: Streulicht um die aktuelle Kopfposition (sigma 1.2)
+                ci = int(pos)
+                for i in range(max(0, ci - 3), min(n - 1, ci + 3) + 1):
+                    d = (i + 0.5) - pos
+                    _mix(i, hr_w, hg_w, hb_w,
+                         g * math.exp(-(d * d) / 2.88))
+                # Schweif hinter dem Kopf: e-Faltung = v*tau LEDs
+                efold = m['efold']
+                span = int(min(n, 3.9 * efold))
+                for k_px in range(1, span + 1):
+                    ip = ci - m['sign'] * k_px
+                    # Kopf schon draussen: der Schweif reicht noch HEREIN —
+                    # ueberspringen, nicht abbrechen (sonst friert der
+                    # sichtbare Rest-Schweif beim Kopf-Austritt ein).
+                    if m['sign'] > 0 and ip >= n:
+                        continue
+                    if m['sign'] < 0 and ip < 0:
+                        continue
+                    if ip < 0 or ip >= n:
+                        break     # durchs hintere Ende hinausgelaufen
+                    d = abs(pos - (ip + 0.5))
+                    b_lin = math.exp(-d / efold)
+                    if b_lin < 0.02:
+                        break
+                    jit = 1.0 + gj * iris_meteor_jitter(ip, m['seed'])
+                    gi = min(31, int(31.0 * min(1.0, d / (2.5 * efold))))
+                    tr, tg, tb = grad[gi]
+                    _mix(ip, tr, tg, tb,
+                         g * iris_render.perceptual(b_lin) * jit)
+            # Impact: kurzer Vollflaechen-Flash (gain-gedeckelt, Stroboskop-
+            # Bremse via geteiltem iris_last_flash) + Rueckwelle vom Ende.
+            fl_s = IRIS['flash_max_ms'] / 1000.0
+            imp = bl.get('impact_at')
+            if imp is not None and bl_t >= imp:
+                ft = bl_t - imp
+                sign0 = bl['meteors'][0]['sign']
+                if ft < 0.35:
+                    # Rueckwelle: reflektierter Kurz-Schweif, ~25 % Amplitude
+                    end_pos = float(n) if sign0 > 0 else 0.0
+                    rw_v = bl['meteors'][0]['v0'] * 0.5
+                    rw_pos = end_pos - sign0 * rw_v * ft
+                    amp = 0.25 * (1.0 - ft / 0.35)
+                    ri = int(rw_pos)
+                    for i in range(max(0, ri - 12), min(n - 1, ri + 12) + 1):
+                        d = (i + 0.5) - rw_pos
+                        _mix(i, hr_w, hg_w, hb_w,
+                             amp * math.exp(-(d * d) / 32.0))
+                if ft < fl_s:
+                    if 'impact_fired' not in bl:
+                        last_fl = self.effect_params.get('iris_last_flash', -1e9)
+                        bl['impact_fired'] = \
+                            (t - last_fl) >= 1.0 / IRIS['max_flash_rate_hz']
+                        if bl['impact_fired']:
+                            self.effect_params['iris_last_flash'] = t
+                    if bl['impact_fired']:
+                        fg = IRIS['flash_gain'] * (1.0 - ft / fl_s)
+                        for i in range(n):
+                            _mix(i, 255.0, 190.0, 120.0, fg)
+            lau = bl.get('launch_at')
+            if lau is not None and lau <= bl_t < lau + fl_s:
+                if 'launch_fired' not in bl:
+                    last_fl = self.effect_params.get('iris_last_flash', -1e9)
+                    bl['launch_fired'] = \
+                        (t - last_fl) >= 1.0 / IRIS['max_flash_rate_hz']
+                    if bl['launch_fired']:
+                        self.effect_params['iris_last_flash'] = t
+                if bl['launch_fired']:
+                    ft = bl_t - lau
+                    fg = IRIS['flash_gain'] * 0.7 * (1.0 - ft / fl_s)
+                    sign0 = bl['meteors'][0]['sign']
+                    for i in range(n):
+                        dist_in = i if sign0 > 0 else (n - 1 - i)
+                        w = fg * max(0.0, 1.0 - dist_in / (n * 0.5))
+                        _mix(i, 255.0, 190.0, 120.0, w)
+        elif blind_on and bl.get('type') == 'sweep':
             # SWEEP (L6): ein warmweisser Lichtstreif rast von der
             # Startposition in eine Richtung — Gauss-Kopf wie die Welle,
             # aber auf SCHWARZ und in Blinder-Weiss. Im Nachglimmen steht
@@ -1843,7 +2109,7 @@ def warn_event_evt():
     Queue-Kappe verwirft Bursts statt veralteter Blinder."""
     data = request.get_json() or {}
     kind = str(data.get('kind') or '')
-    if kind not in ('double', 'roll', 'accent', 'burst', 'sweep', 'shimmer', 'echo'):
+    if kind not in ('double', 'roll', 'accent', 'burst', 'sweep', 'shimmer', 'echo', 'meteor'):
         return jsonify({'status': 'ignored'})
 
     def _f(key, default, lo, hi):
@@ -1869,6 +2135,7 @@ def warn_event_evt():
           'intensity': _f('intensity', 1.0, 0.3, 1.0),
           'density': _f('density', 1.0, 0.5, 1.5),
           'origin': _f('origin', 0.5, 0.0, 1.0),
+          'v': _f('v', 0, 0, 4000),   # Meteor: Kopftempo LED/s; 0 = wuerfeln
           'dir': 1 if _f('dir', 1, -1, 1) >= 0 else -1}
     if controller.current_effect == 'iris_warn':
         evq = controller.effect_params.setdefault('iris_events', [])

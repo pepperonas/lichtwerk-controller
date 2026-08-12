@@ -69,6 +69,21 @@ RANGES = {
     "shimmer_gain": (0.1, 1.0),
     "variant_dur_min": (0.06, 0.5),
     "variant_dur_max": (0.2, 1.5),
+    # Meteor (W2)
+    "meteor_v_min": (200.0, 4000.0),
+    "meteor_v_max": (200.0, 4000.0),
+    "meteor_trail_s": (0.02, 0.3),
+    "meteor_jitter": (0.0, 0.3),
+    "meteor_head_gain": (0.3, 1.0),
+    "meteor_duck": (0.0, 1.0),
+    "meteor_pre_dip_s": (0.05, 0.3),
+    "meteor_recover_s": (0.1, 1.0),
+    "flash_gain": (0.1, 0.55),
+    "flash_max_ms": (20.0, 120.0),
+    "max_flash_rate_hz": (0.2, 3.0),
+    "meteor_max_concurrent": (1, 4),
+    "meteor_head_temp": (4000.0, 10000.0),
+    "meteor_tail_temp": (1500.0, 5000.0),
     "drop_ks": (0.5, 1.0),
     "drop_avg": (0.1, 1.0),
     "drop_cooldown": (2.0, 60.0),
@@ -101,6 +116,32 @@ DEFAULTS = {
     # Richtung beid-/einseitig, Breite/Tempo-Jitter, Funkenfenster 40-80 ms
     # statt exakt 55 ms (False = Baseline: immer Mitte, beidseitig, 55 ms).
     "wave_variety": True,
+
+    # W2: Meteor — rasender Weiss-Kopf mit Schweif (Kind 'meteor').
+    # Bewegung analytisch in LED/s (delta-time), gemalt als Line-Integral
+    # (iris_render.line_coverage) — lueckenlos bei jeder Geschwindigkeit.
+    "meteor_enabled": True,
+    "meteor_v_min": 900.0,     # LED/s — 600 px in ~0.65 s
+    "meteor_v_max": 2400.0,    # LED/s — 600 px in ~0.25 s ("Whip")
+    "meteor_profile": "expo_out",   # const | expo_out | accel
+    # Schweif-Zeitkonstante: e-Faltung = v*tau LEDs hinter dem Kopf
+    # (schneller = laengerer Schweif, physikalisch plausibel). 0.08 s:
+    # bei 2400 LED/s ~190 px e-Faltung (~2/3 Strip sichtbar), bei 900 ~70 px.
+    # Der Plan-Wert 0.35 haette bei 2400 den GANZEN Strip dauerhell gelegt.
+    "meteor_trail_s": 0.08,
+    "meteor_jitter": 0.10,     # per-Pixel-Glut-Koernung im Schweif (5-15 %)
+    "meteor_head_gain": 1.0,   # absolut (Blinder-Stromklasse), wie sparkle
+    "meteor_duck": 0.35,       # Basis-Rot im Flug (Ducking statt Clipping)
+    "meteor_pre_dip_s": 0.12,  # "Einatmen" 80-150 ms vor dem Start
+    "meteor_recover_s": 0.25,  # Rot-Rueckkehr nach dem Impact
+    "meteor_impact": True,     # Impact-Flash am Strip-Ende
+    "meteor_launch": False,    # Launch-Flash (Phase-1-Entscheid: default aus)
+    "flash_gain": 0.35,        # Vollflaechen-Deckel = 55-%-Stromklasse
+    "flash_max_ms": 60.0,      # kurze Transienten driften nicht gruenlich
+    "max_flash_rate_hz": 1.0,  # konservative Stroboskop-Bremse
+    "meteor_max_concurrent": 2,
+    "meteor_head_temp": 7500.0,   # Kopf minimal kuehl ("Plasma"-Spitze)
+    "meteor_tail_temp": 2900.0,   # Schweif verglueht ins Warme
 
     # Takt: Freilauf-Periode + Klemmen + Tempo-Lock-Glaettung
     "period_freerun": 0.55,

@@ -451,7 +451,7 @@ def test_warn_event_route_and_intake_contracts():
     gewinnt (Events verderblich), alter iris_drop_t0-Pfad vollstaendig ersetzt."""
     src = _src()
     assert "@app.route('/api/warn_event', methods=['POST'])" in src
-    assert "('double', 'roll', 'accent', 'burst', 'sweep', 'shimmer', 'echo')" in src, "kind whitelist"
+    assert "('double', 'roll', 'accent', 'burst', 'sweep', 'shimmer', 'echo', 'meteor')" in src, "kind whitelist"
     # Gap-Clamp lebt seit L6 im _f()-Helper; die Grenzen bleiben der Vertrag.
     assert "gap = _f('gap_ms', 160, 60, 400) / 1000.0" in src
     # dur_ms ABWESEND muss 0.0 bleiben (Intake-Fallback, z.B. 0.7 s Sweep) —
@@ -501,7 +501,9 @@ def test_event_white_is_sparse_sparkle_on_black():
     zweimal DIESELBEN Stellen (Echo), Rolle = wandernde Stellen."""
     src = _src()
     assert "def _sparkle_spots(count):" in src
-    assert "base = dark if blind_on else (c if lit else dark)" in src
+    # W2: Meteor-Plaene ducken statt abzuschalten — klassische Blinder
+    # erzwingen weiter Schwarz zwischen den Fenstern.
+    assert "base = dark if (blind_on and not meteor_on) else (c if lit else dark)" in src
     assert "spots = (sp, sp)" in src, "double must reuse the SAME spots — the echo"
     assert "tuple(_sparkle_spots(IRIS['roll_spots']) for _ in win)" in src, "roll spots must wander"
     assert "Color(int(IRIS['sparkle_r'] * v), int(IRIS['sparkle_g'] * v), int(IRIS['sparkle_b'] * v))" in src, \
