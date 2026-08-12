@@ -39,6 +39,14 @@ def test_broken_config_never_breaks_the_effect():
 
 
 def test_every_range_key_has_a_default_and_vice_versa():
+    # bool ist int-Subklasse — Schalter (engage_variety) haben bewusst
+    # keinen Range, jeder ECHT numerische Parameter braucht einen.
     numeric = {k for k, v in iris_config.DEFAULTS.items()
-               if k != "seed" and isinstance(v, (int, float))}
+               if k != "seed" and isinstance(v, (int, float))
+               and not isinstance(v, bool)}
     assert numeric == set(iris_config.RANGES.keys())
+
+
+def test_bool_switches_load_without_ranges():
+    assert iris_config.load({"engage_variety": False})["engage_variety"] is False
+    assert iris_config.load({})["engage_variety"] is True

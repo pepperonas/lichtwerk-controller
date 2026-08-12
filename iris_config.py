@@ -23,6 +23,8 @@ RANGES = {
     "red_attack": (0.01, 0.15),
     "red_hold": (0.02, 0.40),
     "red_floor": (0.0, 0.40),
+    "red_punch": (0.0, 0.5),
+    "freerun_jitter": (0.0, 0.15),
     # Takt
     "period_freerun": (0.30, 1.50),
     "period_min": (0.20, 0.60),
@@ -79,6 +81,15 @@ DEFAULTS = {
     "red_attack": 0.06,
     "red_hold": 0.16,
     "red_floor": 0.16,
+    # L2: Peak folgt der gemessenen Kick-Staerke (0 = jeder Schlag gleich
+    # hart = Baseline); sanfter Schlag drueckt den Peak um bis zu red_punch.
+    "red_punch": 0.3,
+    # L2: Freilauf-Periode als langsamer Random-Walk (±Anteil) statt
+    # exaktem 0.55-s-Metronom; 0 = Baseline.
+    "freerun_jitter": 0.05,
+    # L2: Engage-Doppelpuls-Timing variiert je Warn-Flanke (False = immer
+    # exakt 70/60/80 ms = Baseline).
+    "engage_variety": True,
 
     # Takt: Freilauf-Periode + Klemmen + Tempo-Lock-Glaettung
     "period_freerun": 0.55,
@@ -153,6 +164,8 @@ def load(section):
                 val = type(DEFAULTS[key])(val)
             except (TypeError, ValueError):
                 continue
-            lo, hi = RANGES[key]
-            cfg[key] = max(lo, min(hi, val))
+            if key in RANGES:
+                lo, hi = RANGES[key]
+                val = max(lo, min(hi, val))
+            cfg[key] = val
     return cfg

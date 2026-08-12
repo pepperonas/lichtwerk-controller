@@ -115,6 +115,53 @@ def iris_red_envelope(u):
     return floor + (1.0 - floor) * g * g
 
 
+def iris_red_punch_peak(ks, punch):
+    """L2: Peak-Faktor des Schlags aus der gemessenen Kick-Staerke.
+
+    Harter Kick (ks=1) -> voller Peak 1.0; sanfter Kick (ks=0) drueckt den
+    Peak um bis zu `punch`. punch=0 = Baseline (jeder Schlag gleich hart).
+    """
+    ks = max(0.0, min(1.0, ks))
+    return 1.0 - max(0.0, punch) * (1.0 - ks)
+
+
+def iris_scale_envelope(env, peak, floor):
+    """Huellkurve ueber dem Glut-Boden auf den Peak skalieren.
+
+    Der Boden BLEIBT (die Glut stirbt nie mit einem sanften Kick) — nur
+    der Hub darueber atmet mit der Schlag-Staerke.
+    """
+    if peak >= 1.0 or floor >= 1.0:
+        return env
+    return floor + (env - floor) * (peak - floor) / (1.0 - floor)
+
+
+def iris_freerun_walk(f, jitter, r):
+    """L2: Random-Walk-Schritt der Freilauf-Periode (r in [-1,1]).
+
+    Halber Jitter je Schritt, reflektierend geklemmt auf ±jitter — die
+    0.55 s driften traege statt exakt zu ticken (kein Metronom), koennen
+    aber nie davonlaufen.
+    """
+    if jitter <= 0.0:
+        return 1.0
+    return max(1.0 - jitter, min(1.0 + jitter, f + 0.5 * jitter * r))
+
+
+def iris_engage_window(rng, variety):
+    """L2: Dunkelfenster des Engage-Doppelpulses, je Warn-Flanke gewuerfelt.
+
+    Baseline (variety=False): exakt (0.07, 0.13) = ON 70 / OFF 60 / ON 80 ms.
+    Mit Variety wandert der Aussetzer (Start 50-90 ms, Laenge 45-75 ms) —
+    bleibt aber IMMER in der Engage-Phase (< 0.21 s), der zweite Puls hat
+    also mindestens ~45 ms.
+    """
+    if not variety:
+        return (0.07, 0.13)
+    a = rng.uniform(0.05, 0.09)
+    return (a, a + rng.uniform(0.045, 0.075))
+
+
 app = Flask(__name__)
 CORS(app)
 
@@ -1011,6 +1058,11 @@ class LichtwerkWebController:
             self.effect_params['iris_rng'] = random.Random(IRIS['seed'])
                                                          # (iris_t0 resettet je Warn-Flanke -> alte
                                                          # born-Zeiten waeren unsichtbare Zombies)
+            # L2: Engage-Timing je Flanke + Freilauf-Random-Walk (Reset je
+            # Engage — Zombie-Doktrin: kein Zustand ueberlebt die Flanke).
+            self.effect_params['iris_engage_win'] = iris_engage_window(
+                self.effect_params['iris_rng'], IRIS['engage_variety'])
+            self.effect_params['iris_freerun_f'] = 1.0
             self.effect_params['iris_drop_at'] = -1e9    # Cooldown 8 s — Bomben sind rar
             self.effect_params['iris_last_write'] = 0.0  # EIN Schreibtakt fuer ALLE Pfade
         t = mono() - t0
@@ -1168,10 +1220,15 @@ class LichtwerkWebController:
         seed = self.effect_params.get('iris_bpm_period')
         ema = self.effect_params.get('iris_beat_ema')
         lk = self.effect_params.get('iris_last_kick')
-        if lk is not None and t - lk <= IRIS['kick_stale'] and (seed or ema is not None):
+        freerun_now = not (lk is not None and t - lk <= IRIS['kick_stale']
+                           and (seed or ema is not None))
+        if not freerun_now:
             iris_period = max(IRIS['period_min'], min(IRIS['period_max'], seed if seed else ema))
         else:
-            iris_period = IRIS['period_freerun']
+            # L2: Freilauf atmet (Random-Walk ±freerun_jitter statt Metronom);
+            # der Faktor wird am Perioden-Wrap weitergewuerfelt.
+            iris_period = IRIS['period_freerun'] \
+                * self.effect_params.get('iris_freerun_f', 1.0)
         self.effect_params['iris_period_eff'] = iris_period
         if snap and t >= 0.21:
             # u == 0 right now → rising edge ON the beat.
@@ -1218,7 +1275,8 @@ class LichtwerkWebController:
         # ON 70ms · OFF 60ms · ON 80ms, then sustain
         red_env = 1.0
         if t < 0.21:
-            lit = not (0.07 <= t < 0.13)
+            ew = self.effect_params.get('iris_engage_win') or (0.07, 0.13)
+            lit = not (ew[0] <= t < ew[1])
         else:
             # Atmen statt Rechteck (2026-08-11): Periode bleibt tempo-gelockt
             # und der Attack sitzt AUF dem Beat (Kick-Snap setzt u=0) — aber
@@ -1227,12 +1285,26 @@ class LichtwerkWebController:
             u = ((t - 0.21 - self.effect_params.get('iris_ph', 0.0)) / iris_period) % 1.0
             lit = True
             red_env = iris_red_envelope(u)
+            # L2: Peak folgt der Kick-Staerke — ein sanfter Schlag blueht
+            # flacher auf, der Glut-Boden bleibt. Im Freilauf (kein frischer
+            # Kick) neutraler Mittelwert statt eingefrorenem letzten Kick.
+            punch = IRIS['red_punch']
+            if punch > 0.0:
+                ks = (float(self.effect_params.get('iris_kick_boost', 0.0) or 0.0)
+                      if not freerun_now else 0.5)
+                red_env = iris_scale_envelope(
+                    red_env, iris_red_punch_peak(ks, punch), IRIS['red_floor'])
             prev_u = self.effect_params.get('iris_prev_u')
             self.effect_params['iris_prev_u'] = u
             if prev_u is not None and u < prev_u - 0.5:
                 # Perioden-Wrap = Schlagmoment -> Funkenfenster (Freilauf;
                 # echte Kicks armieren es ohnehin im Intake)
                 self.effect_params['iris_spark_until'] = t + 0.055
+                if freerun_now and IRIS['freerun_jitter'] > 0.0:
+                    rng = self.effect_params.get('iris_rng') or random
+                    self.effect_params['iris_freerun_f'] = iris_freerun_walk(
+                        self.effect_params.get('iris_freerun_f', 1.0),
+                        IRIS['freerun_jitter'], rng.uniform(-1.0, 1.0))
 
         if blinder is not None:
             lit = blinder[0]

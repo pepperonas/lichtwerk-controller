@@ -194,18 +194,19 @@ def test_shadow_zombies_are_pruned_and_fresh_cohort_is_visible_immediately():
 
 GOLDEN_FRAME_HASH = "a38f6cdb0b2100c4fb11090ecba036ef745f80c31fb0fc6490df238564f6f446"
 
+# L2-Schalter auf Baseline: red_punch aus, kein Freilauf-Jitter, festes
+# Engage-Timing — damit bleibt der Original-Hash der Rollback-Beweis.
+BASELINE_OFF = {"red_punch": 0.0, "freerun_jitter": 0.0,
+                "engage_variety": False}
 
-def test_golden_frames_with_seed_and_fake_clock():
-    """L1-Waechter (Phase 3): Seed + injizierte Fake-Uhr => bitgenau
-    reproduzierbare Frames. Der Hash ist der Verhaltens-Fingerabdruck der
-    Baseline — JEDE unbeabsichtigte Verhaltensaenderung (auch durch kuenftige
-    Feature-Schalter im AUS-Zustand) aendert ihn und faellt hier auf.
-    Absichtliche Aenderungen pinnen einen neuen Hash MIT Begruendung."""
+def _golden_run(extra_cfg):
     import hashlib
     state = {"t": 100.0}
     c = fresh()
     c.iris_clock = lambda: state["t"]
-    wc.apply_iris_config({"seed": 1234})
+    cfg = {"seed": 1234}
+    cfg.update(extra_cfg)
+    wc.apply_iris_config(cfg)
     try:
         h = hashlib.sha256()
 
@@ -222,11 +223,31 @@ def test_golden_frames_with_seed_and_fake_clock():
         c.effect_params.setdefault("iris_events", []).append(
             {"kind": "double", "gap": 0.12, "n": 2})      # Sparkle-Blinder
         frames(40)
-        assert h.hexdigest() == GOLDEN_FRAME_HASH
+        return h.hexdigest()
     finally:
         wc.apply_iris_config(None)
         if hasattr(c, "iris_clock"):
             del c.iris_clock
+
+
+def test_golden_frames_with_seed_and_fake_clock():
+    """L1-Waechter (Phase 3): Seed + injizierte Fake-Uhr => bitgenau
+    reproduzierbare Frames. Mit den L2-Schaltern AUS ist der Hash der
+    Verhaltens-Fingerabdruck der BASELINE (Tag iris-baseline-20260812) —
+    der Beweis, dass der Rollback-Pfad intakt bleibt. JEDE unbeabsichtigte
+    Aenderung (auch durch kuenftige Feature-Schalter im AUS-Zustand)
+    aendert ihn und faellt hier auf."""
+    assert _golden_run(BASELINE_OFF) == GOLDEN_FRAME_HASH
+
+
+def test_golden_defaults_are_deterministic():
+    """L2-Defaults (Schalter AN): zwei Laeufe mit demselben Seed sind
+    bit-identisch UND unterscheiden sich von der Baseline (die Schalter
+    tun nachweislich etwas)."""
+    a = _golden_run({})
+    b = _golden_run({})
+    assert a == b
+    assert a != GOLDEN_FRAME_HASH
 
 
 def _lit_pixels(strip):
@@ -291,3 +312,42 @@ def test_shimmer_variant_rerolls_pixels_each_frame():
     finally:
         wc.apply_iris_config(None)
         del c.iris_clock
+
+
+def test_red_punch_peak_and_envelope_scaling():
+    """L2 (pure): harter Kick = voller Peak, sanfter Kick drueckt um bis zu
+    `punch`; die Skalierung laesst den Glut-Boden UNANGETASTET."""
+    assert wc.iris_red_punch_peak(1.0, 0.3) == 1.0
+    assert abs(wc.iris_red_punch_peak(0.0, 0.3) - 0.7) < 1e-9
+    assert wc.iris_red_punch_peak(0.5, 0.0) == 1.0          # Baseline
+    assert wc.iris_red_punch_peak(7.0, 0.3) == 1.0          # ks geklemmt
+    floor = 0.16
+    # Spitze der Huellkurve landet auf dem Peak, der Boden bleibt der Boden
+    assert abs(wc.iris_scale_envelope(1.0, 0.7, floor) - 0.7) < 1e-9
+    assert abs(wc.iris_scale_envelope(floor, 0.7, floor) - floor) < 1e-9
+    assert wc.iris_scale_envelope(0.5, 1.0, floor) == 0.5   # Peak 1.0 = no-op
+
+
+def test_freerun_walk_stays_in_band_and_drifts():
+    """L2 (pure): der Random-Walk bleibt IMMER in ±jitter und bewegt sich."""
+    import random as _r
+    rng = _r.Random(3)
+    f, seen = 1.0, set()
+    for _ in range(500):
+        f = wc.iris_freerun_walk(f, 0.05, rng.uniform(-1.0, 1.0))
+        assert 0.95 <= f <= 1.05
+        seen.add(round(f, 4))
+    assert len(seen) > 50, "Walk muss wandern, nicht kleben"
+    assert wc.iris_freerun_walk(1.3, 0.0, 1.0) == 1.0       # jitter 0 = Baseline
+
+
+def test_engage_window_variety_and_baseline():
+    """L2 (pure): Baseline exakt (0.07, 0.13); Variety wuerfelt, bleibt aber
+    immer in der Engage-Phase (zweiter Puls >= ~45 ms vor 0.21 s)."""
+    import random as _r
+    assert wc.iris_engage_window(_r.Random(1), False) == (0.07, 0.13)
+    wins = {wc.iris_engage_window(_r.Random(s), True) for s in range(200)}
+    assert len(wins) > 100, "Variety muss variieren"
+    for a, b in wins:
+        assert 0.03 <= a < b <= 0.20
+        assert 0.04 <= b - a <= 0.08
