@@ -421,6 +421,7 @@ class LichtwerkWebController:
         # Strip-Warn: exclusive ownership while disco Strip-Warn is armed
         self.strip_warn_over = False   # mirrors page body.over-iris
         self.strip_warn_mode = False   # True while Strip-Warn owns the strip
+        self._pre_warn = None          # Nutzer-Einstellungen vor dem Warn (Restore beim Disarm)
         self._strip_lock = threading.Lock()
 
         # Strip-Warn wash — the dB-Analyse page background, see iris_wash.py.
@@ -524,6 +525,40 @@ class LichtwerkWebController:
     def wake_effect(self):
         """Interrupt effect-loop sleep so the next frame paints ASAP."""
         self._effect_wake.set()
+
+    def _warn_snapshot(self):
+        """Beim SCHARFWERDEN des Strip-Warn: Nutzer-Einstellungen sichern.
+
+        Idempotent je Warn-Session (Folge-Flanken ueberschreiben den
+        Schnappschuss nicht — sonst wuerde die Warn-eigene 255er-Brightness
+        als 'Nutzerwunsch' gespeichert). Das ist die eine Haelfte der
+        Entkopplung 2026-08-12 ('Lichtwerk-Einstellungen beissen sich mit
+        Iris'): vorher ueberschrieb warn_gate die Nutzer-Brightness
+        DAUERHAFT mit 255."""
+        if self._pre_warn is None:
+            self._pre_warn = {
+                'brightness': self.brightness,
+                'speed': self.speed,
+                'color': list(self.color),
+                'effect': (self.current_effect
+                           if self.current_effect != 'iris_warn' else 'solid'),
+            }
+
+    def _warn_restore(self):
+        """Beim ENTSCHAERFEN: Einstellungen zurueckspielen — inklusive
+        aller waehrend des Warn DEFERRED geaenderten Werte (die UI-Routen
+        schreiben bei aktivem Warn in den Schnappschuss statt live).
+        Power bleibt bewusst AUS (bisherige Disarm-Semantik); der naechste
+        Power-On startet mit den richtigen Werten statt mit der Warn-255."""
+        pw = self._pre_warn
+        self._pre_warn = None
+        if not pw:
+            return
+        self.brightness = pw['brightness']
+        self.speed = pw['speed']
+        self.color = list(pw['color'])
+        if pw['effect'] != 'iris_warn':
+            self.current_effect = pw['effect']
 
     def _px_mix(self, i, r, g, b, w):
         """Replace-Blend gegen den AKTUELLEN Puffer — komponiert, nie ueberschreiben.
@@ -2126,6 +2161,10 @@ class LichtwerkWebController:
             # Frames the kernel refused. Non-zero means we are writing into an
             # in-flight DMA transfer — the pacing is off, not the paint.
             'dropped_frames': getattr(self.strip, 'dropped_frames', 0) if self.strip else 0,
+            # Entkopplung 2026-08-12: UI kann anzeigen, dass Iris den Strip
+            # besitzt und Einstellungen erst nach dem Warn-Modus greifen.
+            'strip_warn_mode': self.strip_warn_mode,
+            'settings_deferred': self._pre_warn is not None and self.strip_warn_mode,
             'iris_beat_s': (round(self.effect_params['iris_period_eff'], 3)
                             if self.current_effect == 'iris_warn'
                             and self.effect_params.get('iris_period_eff') else None),
@@ -2154,6 +2193,7 @@ def set_power():
         # Explicit power-off also leaves Strip-Warn mode (disco will re-arm if needed)
         if data.get('clear_warn_mode', False):
             controller.strip_warn_mode = False
+            controller._warn_restore()
         controller._iris_abort()
     controller.wake_effect()
     return jsonify({'status': 'ok', 'power': controller.power})
@@ -2168,6 +2208,7 @@ def warn_gate():
     """
     data = request.get_json() or {}
     over = bool(data.get('over', False))
+    controller._warn_snapshot()
     controller.strip_warn_mode = True
     controller.strip_warn_over = over
     if over:
@@ -2277,11 +2318,14 @@ def warn_mode():
     """Enable/disable Strip-Warn exclusive ownership of the strip."""
     data = request.get_json() or {}
     on = bool(data.get('on', False))
+    if on:
+        controller._warn_snapshot()
     controller.strip_warn_mode = on
     if not on:
         controller.strip_warn_over = False
         controller.power = False
         controller._iris_abort()
+        controller._warn_restore()
     controller.wake_effect()
     return jsonify({
         'status': 'ok',
@@ -2297,16 +2341,30 @@ def _blocked_by_strip_warn():
 @app.route('/api/brightness', methods=['POST'])
 def set_brightness():
     data = request.get_json() or {}
-    brightness = int(data.get('brightness', 100))
-    controller.brightness = max(0, min(255, brightness))
+    brightness = max(0, min(255, int(data.get('brightness', 100))))
+    if _blocked_by_strip_warn():
+        # Entkopplung 2026-08-12: waehrend Iris/Strip-Warn den Strip
+        # besitzt, wird der Nutzerwunsch NICHT live angewendet (er wuerde
+        # das laufende Warn-Bild dimmen), sondern in den Schnappschuss
+        # geschrieben — er gilt, sobald der Warn-Modus endet.
+        controller._warn_snapshot()
+        controller._pre_warn['brightness'] = brightness
+        return jsonify({'status': 'deferred', 'reason': 'strip-warn',
+                        'brightness': brightness})
+    controller.brightness = brightness
     controller.wake_effect()
     return jsonify({'status': 'ok', 'brightness': controller.brightness})
 
 @app.route('/api/speed', methods=['POST'])
 def set_speed():
     data = request.get_json() or {}
-    speed = int(data.get('speed', 50))
-    controller.speed = max(1, min(100, speed))
+    speed = max(1, min(100, int(data.get('speed', 50))))
+    if _blocked_by_strip_warn():
+        controller._warn_snapshot()
+        controller._pre_warn['speed'] = speed
+        return jsonify({'status': 'deferred', 'reason': 'strip-warn',
+                        'speed': speed})
+    controller.speed = speed
     return jsonify({'status': 'ok', 'speed': controller.speed})
 
 @app.route('/api/effect', methods=['POST'])
@@ -2320,8 +2378,11 @@ def set_effect():
 
     # Strip-Warn exclusive: only iris_warn arm allowed; other effects would flash through
     if _blocked_by_strip_warn() and effect != 'iris_warn':
+        # Wunsch aufheben statt verwerfen — gilt nach dem Warn-Modus
+        controller._warn_snapshot()
+        controller._pre_warn['effect'] = effect
         return jsonify({
-            'status': 'blocked',
+            'status': 'deferred',
             'reason': 'strip-warn',
             'effect': controller.current_effect,
             'power': controller.power,
@@ -2362,6 +2423,7 @@ def set_effect():
         elif effect == 'fire':
             controller.effect_params['fire_heat'] = [0] * (controller.strip.numPixels() if controller.strip else 600)
         elif effect == 'iris_warn':
+            controller._warn_snapshot()   # 255er-Punch nie als Nutzerwunsch
             controller.effect_params['iris_t0'] = None
             controller.effect_params['iris_lit'] = None
             controller.effect_params['iris_sparking'] = None
@@ -2380,12 +2442,16 @@ def set_effect():
 
 @app.route('/api/color', methods=['POST'])
 def set_color():
-    if _blocked_by_strip_warn():
-        return jsonify({'status': 'blocked', 'reason': 'strip-warn'})
     data = request.get_json() or {}
     r = max(0, min(255, int(data.get('r', 255))))
     g = max(0, min(255, int(data.get('g', 255))))
     b = max(0, min(255, int(data.get('b', 255))))
+    if _blocked_by_strip_warn():
+        # frueher 'blocked' (Wunsch verworfen) — jetzt aufgehoben
+        controller._warn_snapshot()
+        controller._pre_warn['color'] = [r, g, b]
+        return jsonify({'status': 'deferred', 'reason': 'strip-warn',
+                        'color': {'r': r, 'g': g, 'b': b}})
     controller.color = [r, g, b]
     controller.wake_effect()
     return jsonify({'status': 'ok', 'color': {'r': r, 'g': g, 'b': b}})
