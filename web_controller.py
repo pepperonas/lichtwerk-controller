@@ -1096,6 +1096,47 @@ class LichtwerkWebController:
             g = ev.get('gap', 0.16)
             m = ev.get('n', 2)
             kind = ev.get('kind')
+            inten = float(ev.get('intensity', 1.0) or 1.0)
+            dens = float(ev.get('density', 1.0) or 1.0)
+            dur = float(ev.get('dur', 0.0) or 0.0)
+            # L6-Varianten: eigener Plan-Typ, gleiche Scheduler-Mechanik
+            if kind == 'sweep':
+                self.effect_params['iris_blinder'] = {
+                    't0': t, 'type': 'sweep',
+                    'win': ((0.0, dur or 0.7, inten),),
+                    'origin': float(ev.get('origin', 0.5) or 0.5),
+                    'dir': 1 if ev.get('dir', 1) >= 0 else -1}
+                print(f"warn_event angenommen: sweep dur={dur or 0.7:.2f}s "
+                      f"origin={self.effect_params['iris_blinder']['origin']:.2f} "
+                      f"dir={self.effect_params['iris_blinder']['dir']}", flush=True)
+                continue
+            if kind == 'shimmer':
+                self.effect_params['iris_blinder'] = {
+                    't0': t, 'type': 'shimmer',
+                    'win': ((0.0, dur or 0.7, inten),),
+                    'density': dens}
+                print(f"warn_event angenommen: shimmer dur={dur or 0.7:.2f}s "
+                      f"density={dens:.2f}", flush=True)
+                continue
+            if kind == 'burst':
+                sp_b = _sparkle_spots(max(4, int(IRIS['accent_spots'] * dens)))
+                self.effect_params['iris_blinder'] = {
+                    't0': t,
+                    'win': ((0.0, dur or IRIS['accent_pulse'], inten),),
+                    'spots': (sp_b,)}
+                print(f"warn_event angenommen: burst leds={len(sp_b)}", flush=True)
+                continue
+            if kind == 'echo':
+                d_p = dur or IRIS['double_pulse']
+                sp = _sparkle_spots(max(4, int(IRIS['double_spots'] * dens)))
+                self.effect_params['iris_blinder'] = {
+                    't0': t,
+                    'win': ((0.0, d_p, inten),
+                            (g, g + d_p, inten * IRIS['double_gain2'])),
+                    'spots': (sp, sp)}
+                print(f"warn_event angenommen: echo leds={len(sp)} "
+                      f"gap={g * 1000:.0f}ms", flush=True)
+                continue
             if kind == 'double':
                 # Zwei Schlaege im ECHT gemessenen Kick-Abstand — das Licht
                 # echot den Rhythmus. ZWEIMAL DIESELBEN Stellen: das Echo.
@@ -1403,7 +1444,53 @@ class LichtwerkWebController:
             rng = random.Random(int(t0 * 1000) ^ int(t * 200))
             for i in rng.sample(range(n), k):
                 self.strip.setPixelColor(i, w)
-        if blind_on:
+        if blind_on and bl.get('type') == 'sweep':
+            # SWEEP (L6): ein warmweisser Lichtstreif rast von der
+            # Startposition in eine Richtung — Gauss-Kopf wie die Welle,
+            # aber auf SCHWARZ und in Blinder-Weiss. Im Nachglimmen steht
+            # der Kopf am Ende der Strecke und verglimmt.
+            if blinder[0]:
+                gv = IRIS['blinder_gain'] * blinder[1]
+                a0, b0, _g0 = bl['win'][0]
+                prog = max(0.0, min(1.0, (bl_t - a0) / max(0.05, b0 - a0)))
+            elif blinder_decay is not None:
+                _wi, gv = blinder_decay
+                prog = 1.0
+            else:
+                gv, prog = 0.0, 1.0
+            if gv > 0.01:
+                span = IRIS['sweep_span']
+                centre = bl['origin'] * n + bl['dir'] * prog * span
+                w = IRIS['sweep_width']
+                lo_i = max(0, int(centre - 3 * w))
+                hi_i = min(n - 1, int(centre + 3 * w))
+                sr, sg, sb = IRIS['sparkle_r'], IRIS['sparkle_g'], IRIS['sparkle_b']
+                for i in range(lo_i, hi_i + 1):
+                    d = i - centre
+                    v = gv * math.exp(-(d * d) / (2.0 * w * w))
+                    if v > 0.02:
+                        self.strip.setPixelColor(i, Color(int(sr * v), int(sg * v), int(sb * v)))
+        elif blind_on and bl.get('type') == 'shimmer':
+            # SHIMMER (L6): flirrendes Weiss — jede Neuzeichnung wuerfelt
+            # neue Pixel (die 20-ms-Resends SIND das Flirren); im Nachglimmen
+            # duennt es aus und verglimmt.
+            rng = self.effect_params.get('iris_rng') or random
+            if blinder[0]:
+                gv = IRIS['shimmer_gain'] * IRIS['blinder_gain'] * blinder[1]
+                frac = 1.0
+            elif blinder_decay is not None:
+                _wi, dgv = blinder_decay
+                gv = IRIS['shimmer_gain'] * dgv
+                frac = max(0.0, dgv)
+            else:
+                gv, frac = 0.0, 0.0
+            if gv > 0.01:
+                count = max(2, int(IRIS['shimmer_px'] * bl.get('density', 1.0) * frac))
+                sr, sg, sb = IRIS['sparkle_r'], IRIS['sparkle_g'], IRIS['sparkle_b']
+                for i in rng.sample(range(n), min(n, count)):
+                    v = gv * (0.5 + rng.random() * 0.5)
+                    self.strip.setPixelColor(i, Color(int(sr * v), int(sg * v), int(sb * v)))
+        elif blind_on:
             # Sparse -> hell: nahe Warmweiss ist hier erlaubt (winzige
             # Gesamtlast); die LUT ist im ganzen Plan neutralisiert. Aktives
             # Fenster malt voll, danach verglimmt der Puls (quadratischer
@@ -1613,20 +1700,37 @@ def warn_event_evt():
     Queue-Kappe verwirft Bursts statt veralteter Blinder."""
     data = request.get_json() or {}
     kind = str(data.get('kind') or '')
-    if kind not in ('double', 'roll', 'accent'):
+    if kind not in ('double', 'roll', 'accent', 'burst', 'sweep', 'shimmer', 'echo'):
         return jsonify({'status': 'ignored'})
-    try:
-        gap = max(0.06, min(0.40, float(data.get('gap_ms', 160)) / 1000.0))
-    except (TypeError, ValueError):
-        gap = 0.16
+
+    def _f(key, default, lo, hi):
+        try:
+            return max(lo, min(hi, float(data.get(key, default))))
+        except (TypeError, ValueError):
+            return default
+
+    gap = _f('gap_ms', 160, 60, 400) / 1000.0
     try:
         n = max(2, min(6, int(data.get('n', 2))))
     except (TypeError, ValueError):
         n = 2
+    # L6: additive Varianten-Felder — alte Clients (ohne Felder) rendern
+    # exakt wie bisher; alles geklemmt (Strom + Geschmack sind Config-Sache).
+    # dur_ms ABWESEND => 0.0 (Intake nimmt den Renderer-Default, z.B. 0.7 s
+    # beim Sweep) — die Klemme darf Abwesenheit nicht auf 80 ms hochziehen.
+    ev = {'kind': kind, 'gap': gap, 'n': n,
+          'dur': (_f('dur_ms', IRIS['variant_dur_min'] * 1000,
+                     IRIS['variant_dur_min'] * 1000,
+                     IRIS['variant_dur_max'] * 1000) / 1000.0
+                  if data.get('dur_ms') is not None else 0.0),
+          'intensity': _f('intensity', 1.0, 0.3, 1.0),
+          'density': _f('density', 1.0, 0.5, 1.5),
+          'origin': _f('origin', 0.5, 0.0, 1.0),
+          'dir': 1 if _f('dir', 1, -1, 1) >= 0 else -1}
     if controller.current_effect == 'iris_warn':
         evq = controller.effect_params.setdefault('iris_events', [])
         if len(evq) < 4:
-            evq.append({'kind': kind, 'gap': gap, 'n': n})
+            evq.append(ev)
         controller.wake_effect()
     return jsonify({'status': 'ok'})
 

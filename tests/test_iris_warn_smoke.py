@@ -227,3 +227,67 @@ def test_golden_frames_with_seed_and_fake_clock():
         wc.apply_iris_config(None)
         if hasattr(c, "iris_clock"):
             del c.iris_clock
+
+
+def _lit_pixels(strip):
+    return [i for i, px in enumerate(strip._px) if px]
+
+
+def test_sweep_variant_travels_along_the_strip():
+    """L6: der Sweep ist BEWEGUNG — der weisse Kopf wandert waehrend des
+    Fensters von der Startposition in Pfeilrichtung."""
+    state = {"t": 100.0}
+    # sweep_span (380 LED) ist fuer den echten 600er dimensioniert — auf dem
+    # 60-px-Default-Strip liefe der Kopf nach 2 Frames rechts raus (lit=0).
+    # Der Test faehrt darum in ECHTER Geometrie.
+    c = fresh(FakeStrip(600))
+    c.iris_clock = lambda: state["t"]
+    wc.apply_iris_config({"seed": 5})
+    try:
+        for _ in range(12):
+            state["t"] += 0.021
+            c.effect_iris_warn()
+        c.effect_params.setdefault("iris_events", []).append(
+            {"kind": "sweep", "gap": 0.16, "n": 1, "dur": 0.6,
+             "intensity": 1.0, "density": 1.0, "origin": 0.2, "dir": 1})
+        centres = []
+        for _ in range(28):
+            state["t"] += 0.021
+            c.effect_iris_warn()
+            lit = _lit_pixels(c.strip)
+            if lit:
+                centres.append(sum(lit) / len(lit))
+        assert len(centres) >= 10
+        assert centres[-1] - centres[0] > 60, \
+            f"Sweep muss wandern ({centres[0]:.0f} -> {centres[-1]:.0f})"
+    finally:
+        wc.apply_iris_config(None)
+        del c.iris_clock
+
+
+def test_shimmer_variant_rerolls_pixels_each_frame():
+    """L6: Shimmer flirrt — aufeinanderfolgende Frames wuerfeln andere Pixel."""
+    state = {"t": 200.0}
+    c = fresh()
+    c.iris_clock = lambda: state["t"]
+    wc.apply_iris_config({"seed": 6})
+    try:
+        for _ in range(12):
+            state["t"] += 0.021
+            c.effect_iris_warn()
+        c.effect_params.setdefault("iris_events", []).append(
+            {"kind": "shimmer", "gap": 0.16, "n": 1, "dur": 0.6,
+             "intensity": 1.0, "density": 1.0, "origin": 0.5, "dir": 1})
+        frames = []
+        for _ in range(20):
+            state["t"] += 0.021
+            c.effect_iris_warn()
+            lit = frozenset(_lit_pixels(c.strip))
+            if lit:
+                frames.append(lit)
+        assert len(frames) >= 8
+        distinct = len(set(frames))
+        assert distinct >= len(frames) * 0.6, "Shimmer muss je Frame neu wuerfeln"
+    finally:
+        wc.apply_iris_config(None)
+        del c.iris_clock

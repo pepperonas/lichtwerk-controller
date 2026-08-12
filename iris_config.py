@@ -60,6 +60,12 @@ RANGES = {
     "accent_pulse": (0.05, 0.40),
     "accent_spots": (4, 80),
     "drop_spots": (4, 80),
+    "sweep_width": (4, 60),
+    "sweep_span": (60, 600),
+    "shimmer_px": (6, 80),
+    "shimmer_gain": (0.1, 1.0),
+    "variant_dur_min": (0.06, 0.5),
+    "variant_dur_max": (0.2, 1.5),
     "drop_ks": (0.5, 1.0),
     "drop_avg": (0.1, 1.0),
     "drop_cooldown": (2.0, 60.0),
@@ -114,6 +120,14 @@ DEFAULTS = {
     "accent_pulse": 0.16,
     "accent_spots": 26,
     "drop_spots": 24,
+
+    # Weiss-Varianten (L6): Sweep = rasender Lichtstreif, Shimmer = Flirren
+    "sweep_width": 14,      # Gauss-Halbbreite des Sweep-Kopfs (LEDs)
+    "sweep_span": 380,      # Laufstrecke des Sweeps (LEDs)
+    "shimmer_px": 30,       # Basis-Anzahl flirrender Pixel je Frame
+    "shimmer_gain": 0.5,    # Shimmer ist Flaechen-Textur, kein Blinder
+    "variant_dur_min": 0.08,   # Klemmen fuer Payload-Dauern (Sicherheit)
+    "variant_dur_max": 1.2,
     "drop_ks": 0.9,
     "drop_avg": 0.5,
     "drop_cooldown": 8.0,
