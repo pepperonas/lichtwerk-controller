@@ -34,38 +34,27 @@ def test_iris_engage_double_pulse_pattern():
     assert iris_phase(0.20) is True
 
 
-def _red_env_mirror(u):
-    """Mirror von web_controller.iris_red_envelope (ATTACK 0.06, HOLD 0.16,
-    FLOOR 0.16 — Stand 'weniger flashy', 2026-08-11 Runde 2)."""
-    u = u % 1.0
-    if u < 0.06:
-        f = u / 0.06
-        return 0.16 + 0.84 * (f * f * (3.0 - 2.0 * f))
-    if u < 0.22:
-        return 1.0
-    f = (u - 0.22) / 0.78
-    g = 1.0 - f
-    return 0.16 + 0.84 * g * g
-
-
-def test_red_blooms_fast_then_dies_slow():
-    """'Weniger flashy' (2026-08-11 Runde 2): der Attack blueht ueber die
-    ersten 6 % der Periode auf (Puls, kein Strobe-Sprung), sitzt aber weiter
-    auf dem Beat; der Boden liegt bei 16 % — kleinerer Hub, ruhigeres Bild."""
-    assert abs(_red_env_mirror(0.0) - 0.16) < 1e-9, "startet am Glut-Boden"
-    assert _red_env_mirror(0.03) > 0.5, "Aufbluehen ist schnell"
-    assert _red_env_mirror(0.06) == 1.0 and _red_env_mirror(0.21) == 1.0
-    samples = [_red_env_mirror(u) for u in (0.3, 0.45, 0.6, 0.8, 0.99)]
-    assert samples == sorted(samples, reverse=True)
-    for a, b in zip(samples, samples[1:]):
-        assert 0 < a - b < 0.4, "weiches Verglimmen, keine Spruenge"
-    assert 0.15 < _red_env_mirror(0.999) < 0.22, "Boden 16 % — nie tot"
-
-
 def test_red_mean_energy_stays_moderate():
-    """Energie-Budget: im Mittel etwa halbe Vollhelligkeit."""
-    mean = sum(_red_env_mirror(i / 1000.0) for i in range(1000)) / 1000.0
-    assert 0.42 < mean < 0.62
+    """Energie-Budget der DEFAULT-Atemkurve: der Smoothstep-Verglimm traegt
+    mehr Flaeche als das alte g² (er haelt nach dem Hold laenger hell —
+    genau der gewuenschte "subtile Fade"), bleibt aber unter 2/3 Voll-
+    helligkeit; Peak-Strom ist unveraendert (Peak bleibt 1.0)."""
+    import iris_config
+    d = iris_config.DEFAULTS
+    atk, hold, floor = d["red_attack"], d["red_hold"], d["red_floor"]
+
+    def env(u):
+        if u < atk:
+            f = u / atk
+            return floor + (1 - floor) * f * f * (3 - 2 * f)
+        if u < atk + hold:
+            return 1.0
+        f = (u - atk - hold) / (1 - atk - hold)
+        g = 1 - f
+        return floor + (1 - floor) * (g * g * (3 - 2 * g))
+
+    mean = sum(env(i / 1000.0) for i in range(1000)) / 1000.0
+    assert 0.5 < mean < 0.66
 
 
 def test_web_controller_registers_iris_warn():

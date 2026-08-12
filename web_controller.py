@@ -95,12 +95,16 @@ def iris_red_envelope(u):
     """Atem-Huellkurve des roten Blitzes.
 
     2026-08-11 Runde 2 ("etwas weniger flashy"): der Attack SPRINGT nicht
-    mehr, er BLUEHT ueber die ersten 6 % der Periode auf (smoothstep,
-    ~33 ms bei 0.55 s — sitzt fuers Auge weiter auf dem Beat, liest sich
-    aber als Puls statt Strobe; Club-Praxis: Pulse haben endliche
-    Attacks, Strobes springen). Boden von 6 % auf 16 % angehoben — der
-    kleinere Hub nimmt dem Bild die Hektik. Danach quadratisches
-    Verglimmen wie bei den Sparkle-Blindern.
+    mehr, er BLUEHT ueber den Perioden-Anfang auf (smoothstep — sitzt
+    fuers Auge weiter auf dem Beat, liest sich aber als Puls statt
+    Strobe; Club-Praxis: Pulse haben endliche Attacks, Strobes springen).
+
+    2026-08-12 Runde 3 ("fade-in/out subtiler, natuerlicher"): die
+    Verglimm-Form ist konfigurierbar — das alte quadratische g² faellt
+    direkt nach dem Hold MAXIMAL steil (genau das las sich flashy);
+    red_decay_smooth blendet auf smoothstep(g), das mit Steigung 0
+    beginnt UND landet: der Schlag loest sich, er bricht nicht ab.
+    Attack/Hold-Anteile kommen aus iris_config (Default 12 %/9 %).
     """
     u = u % 1.0
     atk, hold, floor = IRIS['red_attack'], IRIS['red_hold'], IRIS['red_floor']
@@ -112,7 +116,11 @@ def iris_red_envelope(u):
         return 1.0
     f = (u - atk - hold) / (1.0 - atk - hold)
     g = 1.0 - f
-    return floor + (1.0 - floor) * g * g
+    decay = g * g
+    sm = IRIS['red_decay_smooth']
+    if sm > 0.0:
+        decay += (g * g * (3.0 - 2.0 * g) - decay) * sm
+    return floor + (1.0 - floor) * decay
 
 
 def iris_red_punch_peak(ks, punch):

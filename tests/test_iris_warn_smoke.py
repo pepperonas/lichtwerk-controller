@@ -194,11 +194,14 @@ def test_shadow_zombies_are_pruned_and_fresh_cohort_is_visible_immediately():
 
 GOLDEN_FRAME_HASH = "a38f6cdb0b2100c4fb11090ecba036ef745f80c31fb0fc6490df238564f6f446"
 
-# L2/L3-Schalter auf Baseline: red_punch aus, kein Freilauf-Jitter, festes
-# Engage-Timing, Wellen immer Mitte/beidseitig/55-ms-Funken — damit bleibt
-# der Original-Hash der Rollback-Beweis.
+# L2/L3-Schalter + Runde-3-Atemkurve auf Baseline: red_punch aus, kein
+# Freilauf-Jitter, festes Engage-Timing, Wellen immer Mitte/beidseitig/
+# 55-ms-Funken, Envelope 6/16 % quadratisch — damit bleibt der
+# Original-Hash der Rollback-Beweis.
 BASELINE_OFF = {"red_punch": 0.0, "freerun_jitter": 0.0,
-                "engage_variety": False, "wave_variety": False}
+                "engage_variety": False, "wave_variety": False,
+                "red_attack": 0.06, "red_hold": 0.16,
+                "red_decay_smooth": 0.0}
 
 def _golden_run(extra_cfg):
     import hashlib
@@ -433,3 +436,39 @@ def test_one_sided_wave_paints_only_its_arm():
     assert min(changed) >= int(0.2 * 600) - 1, \
         f"links vom Ursprung darf nichts passieren (min={min(changed)})"
     assert max(changed) > int(0.2 * 600) + 20, "rechter Arm muss laufen"
+
+
+def test_red_envelope_default_breathes_softly():
+    """Runde 3 (2026-08-12, Nutzer: „zu flashy — fade-in/out subtiler,
+    natuerlicher"): die Bluete ist SICHTBAR (12 % der Periode), das Voll-
+    Plateau kuerzer (9 %), und das Verglimmen STARTET sanft (smoothstep:
+    Steigung 0 direkt nach dem Hold — kein Absturz) und landet sanft auf
+    dem Glut-Boden. Getestet gegen die ECHTE Funktion, kein Mirror."""
+    wc.apply_iris_config(None)
+    env = wc.iris_red_envelope
+    assert abs(env(0.0) - 0.16) < 1e-9, "startet am Glut-Boden"
+    assert env(0.06) < 0.9, "Attack ist laenger — bei 6 % noch mitten in der Bluete"
+    assert env(0.12) == 1.0 and env(0.20) == 1.0     # Hold 0.12..0.21
+    assert env(0.30) > 0.93, "Verglimmen beginnt SANFT (kein Quadrat-Absturz)"
+    samples = [env(u) for u in (0.3, 0.45, 0.6, 0.8, 0.99)]
+    assert samples == sorted(samples, reverse=True)
+    for a, b in zip(samples, samples[1:]):
+        assert 0 < a - b < 0.4, "weiches Verglimmen, keine Spruenge"
+    assert 0.15 < env(0.999) < 0.22, "Boden 16 % — nie tot"
+
+
+def test_red_envelope_baseline_config_restores_the_old_curve():
+    """Rollback-Pfad: mit den Baseline-Werten (6/16 %, decay_smooth 0) ist
+    die Kurve exakt das alte quadratische Verglimmen."""
+    wc.apply_iris_config({"red_attack": 0.06, "red_hold": 0.16,
+                          "red_decay_smooth": 0.0})
+    try:
+        env = wc.iris_red_envelope
+        assert env(0.06) == 1.0 and env(0.21) == 1.0
+        f = (0.61 - 0.22) / 0.78
+        g = 1.0 - f
+        assert abs(env(0.61) - (0.16 + 0.84 * g * g)) < 1e-9
+        mean = sum(env(i / 1000.0) for i in range(1000)) / 1000.0
+        assert 0.42 < mean < 0.62      # das alte Energie-Budget
+    finally:
+        wc.apply_iris_config(None)

@@ -14,7 +14,9 @@ import iris_config
 
 def test_defaults_are_the_baseline_values():
     d = iris_config.load(None)
-    assert (d["red_attack"], d["red_hold"], d["red_floor"]) == (0.06, 0.16, 0.16)
+    # Runde 3 (2026-08-12, "fade-in/out subtiler"): 12 % Bluete, 9 % Hold
+    assert (d["red_attack"], d["red_hold"], d["red_floor"]) == (0.12, 0.09, 0.16)
+    assert d["red_decay_smooth"] == 1.0
     assert d["period_freerun"] == 0.55
     assert (d["glow_l1"], d["glow_l2"]) == (170.0, 290.0)
     assert (d["shadow_w_min"], d["shadow_w_max"]) == (30, 90)

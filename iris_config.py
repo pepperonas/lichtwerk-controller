@@ -20,9 +20,10 @@ wiederholbar — die Grundlage der Offline-Verifikation).
 # (min, max) je numerischem Parameter — Klemm-Grenzen, nicht Geschmack.
 RANGES = {
     # Rot-Puls (Atem-Huellkurve)
-    "red_attack": (0.01, 0.15),
+    "red_attack": (0.01, 0.20),
     "red_hold": (0.02, 0.40),
     "red_floor": (0.0, 0.40),
+    "red_decay_smooth": (0.0, 1.0),
     "red_punch": (0.0, 0.5),
     "freerun_jitter": (0.0, 0.15),
     # Takt
@@ -77,10 +78,16 @@ DEFAULTS = {
     # Reproduzierbarkeit: None = echter Zufall; int = deterministisch je Engage
     "seed": None,
 
-    # Rot-Puls: Aufbluehen (Anteil der Periode), Vollphase, Glut-Boden
-    "red_attack": 0.06,
-    "red_hold": 0.16,
+    # Rot-Puls: Aufbluehen (Anteil der Periode), Vollphase, Glut-Boden.
+    # 2026-08-12 Runde 3 („zu flashy — fade-in/out subtiler"): Attack
+    # 0.06->0.12 (die Bluete ist SICHTBAR, ~55-65 ms), Hold 0.16->0.09
+    # (weniger Voll-Plateau, mehr Atem), Verglimmen per red_decay_smooth.
+    "red_attack": 0.12,
+    "red_hold": 0.09,
     "red_floor": 0.16,
+    # Verglimm-Form: 0 = quadratisch (Baseline, faellt nach dem Hold sofort
+    # steil), 1 = smoothstep (beginnt sanft, landet sanft — der Atem).
+    "red_decay_smooth": 1.0,
     # L2: Peak folgt der gemessenen Kick-Staerke (0 = jeder Schlag gleich
     # hart = Baseline); sanfter Schlag drueckt den Peak um bis zu red_punch.
     "red_punch": 0.3,
