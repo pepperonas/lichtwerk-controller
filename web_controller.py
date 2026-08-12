@@ -1340,7 +1340,9 @@ class LichtwerkWebController:
                           rng.uniform(IRIS['meteor_v_min'], IRIS['meteor_v_max']))
                     delay = 0.0 if k == 0 else rng.uniform(0.08, 0.24)
                     efold = v0 * IRIS['meteor_trail_s']
-                    dist = n_px + 3.0 * efold + 12.0   # bis der Schweif draussen ist
+                    # bis auch der SICHTBARE Schweif (ln(1/cut) e-Faltungen)
+                    # den Strip verlassen hat
+                    dist = n_px + efold * math.log(1.0 / IRIS['meteor_tail_cut']) + 12.0
                     dur = iris_meteor_dur(dist, v0, profile)
                     exit_t = iris_meteor_time_for(n_px + 6.0, v0, dur, profile)
                     meteors.append({
@@ -1880,9 +1882,14 @@ class LichtwerkWebController:
                     d = (i + 0.5) - pos
                     _mix(i, hr_w, hg_w, hb_w,
                          g * math.exp(-(d * d) / 2.88))
-                # Schweif hinter dem Kopf: e-Faltung = v*tau LEDs
+                # Schweif hinter dem Kopf: e-Faltung = v*tau LEDs. Der
+                # Schnitt (meteor_tail_cut) NORMALISIERT das Restlicht auf
+                # echtes Null — ohne ihn hielt der Gamma-Encode das ferne
+                # Ende auf ~17 % Duty ueber hunderte LEDs: der flaechige
+                # Niedrig-Duty-Teppich, der gelbgruen kippt (2026-08-12).
                 efold = m['efold']
-                span = int(min(n, 3.9 * efold))
+                cut = IRIS['meteor_tail_cut']
+                span = int(min(n, efold * math.log(1.0 / cut) + 2.0))
                 for k_px in range(1, span + 1):
                     ip = ci - m['sign'] * k_px
                     # Kopf schon draussen: der Schweif reicht noch HEREIN —
@@ -1896,13 +1903,14 @@ class LichtwerkWebController:
                         break     # durchs hintere Ende hinausgelaufen
                     d = abs(pos - (ip + 0.5))
                     b_lin = math.exp(-d / efold)
-                    if b_lin < 0.02:
+                    if b_lin < cut:
                         break
                     jit = 1.0 + gj * iris_meteor_jitter(ip, m['seed'])
                     gi = min(31, int(31.0 * min(1.0, d / (2.5 * efold))))
                     tr, tg, tb = grad[gi]
                     _mix(ip, tr, tg, tb,
-                         g * iris_render.perceptual(b_lin) * jit)
+                         g * iris_render.perceptual(
+                             (b_lin - cut) / (1.0 - cut)) * jit)
             # Impact: kurzer Vollflaechen-Flash (gain-gedeckelt, Stroboskop-
             # Bremse via geteiltem iris_last_flash) + Rueckwelle vom Ende.
             fl_s = IRIS['flash_max_ms'] / 1000.0

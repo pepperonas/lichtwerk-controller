@@ -186,8 +186,13 @@ def test_impact_flash_respects_the_strobe_brake():
                 state["t"] += 0.02
                 c.effect_iris_warn()
                 gs = [_g(px) for px in c.strip._px]
-                # Vollflaechen-Flash: praktisch ALLE Pixel deutlich gruen-hell
-                if sum(1 for g in gs if g > 60) > 550:
+                # Vollflaechen-Signatur: >580 der 600 px ueber Schwelle 25.
+                # Schwelle bewusst niedrig: welcher ft-Punkt des 60-ms-
+                # Fensters auf einen gemalten Frame faellt, ist Timing-
+                # Phase (gemessen: einziger Flash-Frame bei ft~30 ms ->
+                # g~33). Pre-Dip-Rot bleibt drunter (g <= ~23), Schweif-
+                # Frames decken nur ~200 px.
+                if sum(1 for g in gs if g > 25) > 580:
                     hits.append(f)
             return hits
         finally:
@@ -226,3 +231,30 @@ def test_meteor_default_flies_on_black():
     assert b[k][5] != 0, "im Vergleichslauf atmet dort das Rot"
     assert a[-1] == b[-1] and bri_a[-1] == bri_b[-1], \
         "nach dem Recover ist das Rot bit-genau zurueck"
+
+
+def test_meteor_footprint_stays_sparse():
+    """2026-08-12 („Schweif kuerzer — faerbt gruenlich"): die gleichzeitig
+    bespielte LED-Zahl ist hart begrenzt. Physik: grosse Flaeche bei
+    niedriger Duty = Spannungssack + Gamma-Murks = Gelbgruen-Drift.
+    Sichtbarer Schweif = ln(1/cut) e-Faltungen (~2.3 x v x 0.035)."""
+    import math
+    for v, cap in ((1200, 160), (2400, 260)):
+        ev = {"kind": "meteor", "gap": 0.16, "n": 1, "dur": 0.0,
+              "intensity": 1.0, "density": 1.0, "origin": 0.5, "dir": 1,
+              "v": float(v)}
+        a, _ = _run(ev, 60, cfg={"freerun_jitter": 0.0}, warmup=24)
+        # Basis ist im Flug SCHWARZ (duck 0) -> jedes nicht-schwarze Pixel
+        # gehoert dem Meteor. Nur Frames VOR dem Kopf-Austritt zaehlen —
+        # der Impact-Flash danach ist absichtlich vollflaechig (kurz,
+        # gain-gedeckelt, Stroboskop-gebremst).
+        exit_frame = int((0.12 + 600.0 / (v * 0.725)) / 0.02) - 2
+        start = 8      # NACH dem Pre-Dip (bl_t 0.12): dort glimmt beim
+        #                Ausblenden absichtlich der ganze Strip dunkelrot
+        worst = max(sum(1 for px in frame if px != 0)
+                    for frame in a[start:exit_frame])
+        expected = v * wc.IRIS["meteor_trail_s"] \
+            * math.log(1.0 / wc.IRIS["meteor_tail_cut"])
+        assert worst <= cap, \
+            f"v={v}: {worst} LEDs gleichzeitig (erwartet ~{expected:.0f}, cap {cap})"
+        assert worst >= expected * 0.5, "Schweif muss sichtbar bleiben"

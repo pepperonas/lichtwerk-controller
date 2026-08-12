@@ -73,6 +73,7 @@ RANGES = {
     "meteor_v_min": (200.0, 4000.0),
     "meteor_v_max": (200.0, 4000.0),
     "meteor_trail_s": (0.02, 0.3),
+    "meteor_tail_cut": (0.02, 0.3),
     "meteor_jitter": (0.0, 0.3),
     "meteor_head_gain": (0.3, 1.0),
     "meteor_duck": (0.0, 1.0),
@@ -137,10 +138,18 @@ DEFAULTS = {
     "meteor_v_max": 2400.0,    # LED/s — 600 px in ~0.25 s ("Whip")
     "meteor_profile": "expo_out",   # const | expo_out | accel
     # Schweif-Zeitkonstante: e-Faltung = v*tau LEDs hinter dem Kopf
-    # (schneller = laengerer Schweif, physikalisch plausibel). 0.08 s:
-    # bei 2400 LED/s ~190 px e-Faltung (~2/3 Strip sichtbar), bei 900 ~70 px.
-    # Der Plan-Wert 0.35 haette bei 2400 den GANZEN Strip dauerhell gelegt.
-    "meteor_trail_s": 0.08,
+    # (schneller = laengerer Schweif, physikalisch plausibel).
+    # 2026-08-12 („Schweif kuerzer, faerbt gruenlich"): 0.08 -> 0.035 —
+    # bei 0.08 deckte der Schweif bei 2400 LED/s ~750 px ab und der
+    # Gamma-Encode hielt das ferne Ende auf ~17 % Duty: genau der
+    # flaechige Niedrig-Duty-Teppich, der laut Feldbefund 2026-08-10
+    # gelbgruen kippt (Spannungssack + fast-gleiche niedrige Kanaele).
+    # Jetzt: sichtbarer Schweif ~73 px (900) bis ~193 px (2400).
+    "meteor_trail_s": 0.035,
+    # Schweif-Schnitt: unterhalb dieses linearen Restlichts endet der
+    # Schweif AUF NULL (normalisiert) statt als Schleier weiterzuglimmen —
+    # sichtbare Laenge = ln(1/cut) e-Faltungen (~2.3 bei 0.10).
+    "meteor_tail_cut": 0.10,
     "meteor_jitter": 0.10,     # per-Pixel-Glut-Koernung im Schweif (5-15 %)
     "meteor_head_gain": 1.0,   # absolut (Blinder-Stromklasse), wie sparkle
     # 2026-08-12 („weiss nur wenn rot aus"): Flug auf SCHWARZ — der Pre-Dip
