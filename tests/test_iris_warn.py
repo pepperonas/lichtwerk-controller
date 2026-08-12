@@ -195,7 +195,7 @@ def test_kick_extension_falls_back_to_the_tagged_blitz():
     src = _src()
     assert "self.effect_params['iris_ph'] = 0.0" in src
     assert "iris_ph', 0.0" in src              # default keeps the free-run identity
-    assert "period = 0.55" in src
+    assert "IRIS['period_freerun']" in src
     assert "red_env = iris_red_envelope(u)" in src
     assert "Fallback IS the tag" in src
 
@@ -372,8 +372,8 @@ def test_strip_drop_blinder_mirrors_the_page_bomb():
     the 5 V rail cause exactly the bit-slips the heartbeat fights. 8 s
     cooldown: bombs that repeat are wallpaper."""
     src = _src()
-    assert "if ks >= 0.9 and avg >= 0.5" in src
-    assert "> 8.0" in src
+    assert "if ks >= IRIS['drop_ks'] and avg >= IRIS['drop_avg']" in src
+    assert "> IRIS['drop_cooldown']" in src
     assert "(0.0, 0.07, 1.0), (0.13, 0.22, 1.0), (0.30, 0.40, 0.7)" in src
     assert "'spots': (sp, sp, sp)" in src, \
         "drop slams the SAME sparkle spots three times — the triple echo"
@@ -471,7 +471,7 @@ def test_warn_event_route_and_intake_contracts():
     # Event-Weiss bleibt ABSOLUT (unabhaengig von controller.brightness und
     # Strip-LUT — Feldbefund 2026-08-09: LUT+Kernel-Gamma = unsichtbarer
     # Murks); seit 2026-08-10 als Sparse-Sparkle mit festem Gain.
-    assert "1.0 * blinder[1]" in src
+    assert "IRIS['blinder_gain'] * blinder[1]" in src
     assert "scale * 0.55" not in src and "scale * 0.45" not in src, "the blinder must not scale with the mood dimmer"
     assert "want = 255 if blind_on else" in src, "blinder frames must neutralise the strip LUT"
     assert "if spark and n > 0 and not blind_on:" in src, "no sparks into a blinder frame"
@@ -510,8 +510,8 @@ def test_event_white_is_sparse_sparkle_on_black():
     assert "def _sparkle_spots(count):" in src
     assert "base = dark if blind_on else (c if lit else dark)" in src
     assert "spots = (sp, sp)" in src, "double must reuse the SAME spots — the echo"
-    assert "tuple(_sparkle_spots(16) for _ in win)" in src, "roll spots must wander"
-    assert "Color(int(255 * v), int(205 * v), int(150 * v))" in src, \
+    assert "tuple(_sparkle_spots(IRIS['roll_spots']) for _ in win)" in src, "roll spots must wander"
+    assert "Color(int(IRIS['sparkle_r'] * v), int(IRIS['sparkle_g'] * v), int(IRIS['sparkle_b'] * v))" in src, \
         "sparse clusters may run near-true warm white — tiny load, high duty"
     assert "int(138 * bg)" not in src and "bg = 0.55" not in src, \
         "the full-surface tungsten flood must be gone"
@@ -531,4 +531,4 @@ def test_shadow_pockets_are_wired_into_the_glow_table():
     assert "iris_shadows" in src
     assert "* iris_shadow_field(b + 1.5, pockets, t)" in src, \
         "shadows must multiply into the same table base painting AND waves read"
-    assert "while len(pockets) < IRIS_SHADOW_COUNT:" in src, "der Nachschub haelt den Bestand"
+    assert "while len(pockets) < IRIS['shadow_count']:" in src, "der Nachschub haelt den Bestand"

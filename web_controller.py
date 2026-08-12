@@ -22,11 +22,17 @@ import random
 WASH_FPS = 30.0
 WASH_FRAME_S = 1.0 / WASH_FPS
 
-IRIS_GLOW_MIN = 0.45    # dunkelste Zone der Wander-Glut (nie uniform, nie tot)
-IRIS_GLOW_L1 = 170.0    # Wellenlaengen in LEDs — bewusst inkommensurabel
-IRIS_GLOW_L2 = 290.0    #   (und keine Teiler von 600: kein symmetrisches Muster)
-IRIS_GLOW_V1 = 14.0     # Driftgeschwindigkeiten in LED/s — gegenlaeufig,
-IRIS_GLOW_V2 = -9.0     #   die Ueberlagerung wiederholt sich nie sichtbar
+import iris_config
+
+# Zentrale Iris-Konfiguration (Phase 3 / L1): Defaults = Baseline-Werte,
+# ueberschreibbar per config.json-Sektion "iris" (Ranges geklemmt).
+IRIS = iris_config.load(None)
+
+
+def apply_iris_config(section):
+    """config.json-Sektion "iris" anwenden (Controller-Init)."""
+    global IRIS
+    IRIS = iris_config.load(section)
 
 
 def iris_glow_factor(x, t):
@@ -40,12 +46,14 @@ def iris_glow_factor(x, t):
     sich mit der Atem-Huellkurve (iris_red_envelope): Rot atmet zeitlich
     UND wandert raeumlich — Glut, in der es arbeitet.
     """
+    l1, l2 = IRIS['glow_l1'], IRIS['glow_l2']
     v = (0.5
-         + 0.25 * math.sin(x * (2 * math.pi / IRIS_GLOW_L1)
-                           + t * (2 * math.pi * IRIS_GLOW_V1 / IRIS_GLOW_L1))
-         + 0.25 * math.sin(x * (2 * math.pi / IRIS_GLOW_L2)
-                           + t * (2 * math.pi * IRIS_GLOW_V2 / IRIS_GLOW_L2)))
-    return IRIS_GLOW_MIN + (1.0 - IRIS_GLOW_MIN) * max(0.0, min(1.0, v))
+         + 0.25 * math.sin(x * (2 * math.pi / l1)
+                           + t * (2 * math.pi * IRIS['glow_v1'] / l1))
+         + 0.25 * math.sin(x * (2 * math.pi / l2)
+                           + t * (2 * math.pi * IRIS['glow_v2'] / l2)))
+    gmin = IRIS['glow_min']
+    return gmin + (1.0 - gmin) * max(0.0, min(1.0, v))
 
 
 # ── Schattenzonen (Nutzerwunsch 2026-08-11: "Glut sieht man nicht stark
@@ -54,17 +62,6 @@ def iris_glow_factor(x, t):
 # weiches Gauss-Profil (keine harten Kanten), dimmt ihr Zentrum auf ~15-45 %,
 # blendet ueber ihr Leben ein/aus und driftet langsam — der Nachschub spawnt
 # an zufaelliger Position: nie uniform, nie wiederholend, nie tot.
-IRIS_SHADOW_COUNT = 4        # Zonen gleichzeitig (auf 600 LEDs ~25-40 % Flaeche)
-IRIS_SHADOW_W_MIN = 30       # 50 cm
-IRIS_SHADOW_W_MAX = 90       # 150 cm
-IRIS_SHADOW_DEPTH_MIN = 0.55  # Zentrum dimmt auf 1-depth = 15..45 %
-IRIS_SHADOW_DEPTH_MAX = 0.85
-IRIS_SHADOW_LIFE_MIN = 4.0
-IRIS_SHADOW_LIFE_MAX = 9.0
-IRIS_SHADOW_VEL_MAX = 8.0    # LED/s Drift
-IRIS_SHADOW_RAMP = 1.0       # Ein-/Ausblendzeit in s
-
-
 def iris_shadow_profile(dist, width):
     """Weiches Zonen-Profil: 1 im Zentrum, Gauss-Abfall — Halbwertsbreite
     entspricht der Zonenbreite, keine harte Kante."""
@@ -72,8 +69,10 @@ def iris_shadow_profile(dist, width):
     return math.exp(-(dist * dist) / (2.0 * sigma * sigma))
 
 
-def iris_shadow_alpha(age, life, ramp=IRIS_SHADOW_RAMP):
+def iris_shadow_alpha(age, life, ramp=None):
     """Trapez ueber die Lebenszeit: einblenden, halten, ausblenden."""
+    if ramp is None:
+        ramp = IRIS['shadow_ramp']
     if age <= 0 or age >= life:
         return 0.0
     return max(0.0, min(1.0, min(age / ramp, (life - age) / ramp)))
@@ -92,11 +91,6 @@ def iris_shadow_field(x, pockets, now):
     return f
 
 
-IRIS_RED_ATTACK = 0.06  # Anteil der Periode zum Aufbluehen (~33 ms bei 0.55 s)
-IRIS_RED_HOLD = 0.16    # Anteil der Periode voll AN (der Schlag selbst)
-IRIS_RED_FLOOR = 0.16   # Glut-Boden — kleinerer Hub = ruhigeres Bild
-
-
 def iris_red_envelope(u):
     """Atem-Huellkurve des roten Blitzes.
 
@@ -109,15 +103,16 @@ def iris_red_envelope(u):
     Verglimmen wie bei den Sparkle-Blindern.
     """
     u = u % 1.0
-    if u < IRIS_RED_ATTACK:
-        f = u / IRIS_RED_ATTACK
+    atk, hold, floor = IRIS['red_attack'], IRIS['red_hold'], IRIS['red_floor']
+    if u < atk:
+        f = u / atk
         rise = f * f * (3.0 - 2.0 * f)
-        return IRIS_RED_FLOOR + (1.0 - IRIS_RED_FLOOR) * rise
-    if u < IRIS_RED_ATTACK + IRIS_RED_HOLD:
+        return floor + (1.0 - floor) * rise
+    if u < atk + hold:
         return 1.0
-    f = (u - IRIS_RED_ATTACK - IRIS_RED_HOLD) / (1.0 - IRIS_RED_ATTACK - IRIS_RED_HOLD)
+    f = (u - atk - hold) / (1.0 - atk - hold)
     g = 1.0 - f
-    return IRIS_RED_FLOOR + (1.0 - IRIS_RED_FLOOR) * g * g
+    return floor + (1.0 - floor) * g * g
 
 
 app = Flask(__name__)
@@ -225,6 +220,8 @@ class LichtwerkWebController:
         # Konfigurierte Anlagen-Helligkeit der Strip-LUT — der Blinder
         # neutralisiert sie pro Frame und stellt sie danach wieder her.
         self.strip_lut_default = int(led_cfg.get('led_brightness', 255))
+        # Zentrale Iris-Config (L1): Sektion "iris" aus config.json anwenden
+        apply_iris_config(self.config.get('iris'))
         # State variables
         self.running = True
         self.power = False
@@ -969,16 +966,22 @@ class LichtwerkWebController:
             return
         import random
         import time as _time
+        # Injizierbare Uhr (L1): Default = Echtzeit; Offline-Harness und
+        # Golden-Frame-Test setzen self.iris_clock auf eine Fake-Uhr —
+        # damit werden Frames vollstaendig deterministisch.
+        mono = getattr(self, 'iris_clock', None) or _time.monotonic
 
         def _sparkle_spots(count):
             # Cluster-Positionen fuer den Sparkle-Blinder: `count` Zentren,
-            # 1-3 LEDs breit, individuelle Helligkeit — der Glitzer-Look.
+            # 2-5 LEDs breit, individuelle Helligkeit — der Glitzer-Look.
+            # Zufall NUR aus der seedbaren Effekt-RNG (L1).
+            rng = self.effect_params.get('iris_rng') or random
             npx = self.strip.numPixels()
             spots = []
             for _ in range(count):
-                centre = random.randrange(npx)
-                width = random.choice((2, 3, 3, 4, 5))
-                bri = 0.6 + random.random() * 0.4
+                centre = rng.randrange(npx)
+                width = rng.choice((2, 3, 3, 4, 5))
+                bri = 0.6 + rng.random() * 0.4
                 for off in range(-(width // 2), (width - 1) // 2 + 1):
                     j = centre + off
                     if 0 <= j < npx:
@@ -986,7 +989,7 @@ class LichtwerkWebController:
             return tuple(spots)
         t0 = self.effect_params.get('iris_t0')
         if t0 is None:
-            t0 = _time.monotonic()
+            t0 = mono()
             self.effect_params['iris_t0'] = t0
             self.effect_params['iris_lit'] = None
             self.effect_params['iris_sparking'] = None
@@ -1003,11 +1006,14 @@ class LichtwerkWebController:
             self.effect_params['iris_blinder'] = None    # Blinder-Plan {'t0', 'win': ((a,b,gain),...)}
             self.effect_params['iris_events'] = []       # double/roll/accent von disco (verderblich)
             self.effect_params['iris_shadows'] = []      # Schattenzonen: frische Kohorte je Engage
+            # Seedbare RNG je Engage (L1): fester Seed => jedes Engage exakt
+            # reproduzierbar (Golden-Frame/Offline-Harness); None = Zufall.
+            self.effect_params['iris_rng'] = random.Random(IRIS['seed'])
                                                          # (iris_t0 resettet je Warn-Flanke -> alte
                                                          # born-Zeiten waeren unsichtbare Zombies)
             self.effect_params['iris_drop_at'] = -1e9    # Cooldown 8 s — Bomben sind rar
             self.effect_params['iris_last_write'] = 0.0  # EIN Schreibtakt fuer ALLE Pfade
-        t = _time.monotonic() - t0
+        t = mono() - t0
 
         # ── Kick intake (Flask thread appends plain floats; GIL-safe pops) ──
         q = self.effect_params.get('iris_kicks')
@@ -1045,12 +1051,12 @@ class LichtwerkWebController:
                         while dt_k > ema * 1.6 and dt_k >= 0.48:
                             dt_k /= 2.0
                     self.effect_params['iris_beat_ema'] = \
-                        dt_k if ema is None else ema + (dt_k - ema) * 0.25
+                        dt_k if ema is None else ema + (dt_k - ema) * IRIS['period_ema']
             self.effect_params['iris_last_kick'] = t
             # Refractory 0.24 s: on_beat fires on EVERY onset (snares/offbeats
             # included), and a snap per onset re-lights the window until the
             # dark phase collapses — the measured "verharrt" failure.
-            if t - self.effect_params.get('iris_last_snap', -9.0) >= 0.24:
+            if t - self.effect_params.get('iris_last_snap', -9.0) >= IRIS['snap_refractory']:
                 self.effect_params['iris_last_snap'] = t
                 snap = True
             self.effect_params['iris_spark_until'] = t + 0.055
@@ -1059,11 +1065,11 @@ class LichtwerkWebController:
             self.effect_params['iris_kick_avg'] = avg + (ks - avg) * 0.15
             # Drop: sehr harter Schlag nach laenger anliegender Energie —
             # der Strip zuendet denselben Blinder-Moment wie die Seite.
-            if ks >= 0.9 and avg >= 0.5 \
-                    and t - self.effect_params.get('iris_drop_at', -1e9) > 8.0:
+            if ks >= IRIS['drop_ks'] and avg >= IRIS['drop_avg'] \
+                    and t - self.effect_params.get('iris_drop_at', -1e9) > IRIS['drop_cooldown']:
                 self.effect_params['iris_drop_at'] = t
                 # Drop = Preset desselben Blinder-Schedulers wie die Events.
-                sp = _sparkle_spots(24)
+                sp = _sparkle_spots(IRIS['drop_spots'])
                 self.effect_params['iris_blinder'] = {
                     't0': t,
                     'win': ((0.0, 0.07, 1.0), (0.13, 0.22, 1.0), (0.30, 0.40, 0.7)),
@@ -1093,18 +1099,20 @@ class LichtwerkWebController:
             if kind == 'double':
                 # Zwei Schlaege im ECHT gemessenen Kick-Abstand — das Licht
                 # echot den Rhythmus. ZWEIMAL DIESELBEN Stellen: das Echo.
-                win = ((0.0, 0.10, 1.0), (g, g + 0.10, 0.85))
-                sp = _sparkle_spots(22)
+                d_p = IRIS['double_pulse']
+                win = ((0.0, d_p, 1.0), (g, g + d_p, IRIS['double_gain2']))
+                sp = _sparkle_spots(IRIS['double_spots'])
                 spots = (sp, sp)
             elif kind == 'roll':
                 # Stakkato im Roll-Tempo, abklingend — je Puls NEUE Stellen
                 # (wandernder Glitzer), nie unter halbe Kraft.
-                win = tuple((i * g, i * g + 0.09, max(0.5, 1.0 - i * 0.14))
+                win = tuple((i * g, i * g + IRIS['roll_pulse'],
+                             max(IRIS['roll_gain_floor'], 1.0 - i * IRIS['roll_decay_per']))
                             for i in range(m))
-                spots = tuple(_sparkle_spots(16) for _ in win)
+                spots = tuple(_sparkle_spots(IRIS['roll_spots']) for _ in win)
             else:
-                win = ((0.0, 0.16, 1.0),)   # accent: ein einzelner Einschlag
-                spots = (_sparkle_spots(26),)
+                win = ((0.0, IRIS['accent_pulse'], 1.0),)   # accent: ein Einschlag
+                spots = (_sparkle_spots(IRIS['accent_spots']),)
             print(f"warn_event angenommen: {kind} pulse={len(win)} "
                   f"leds={sum(len(x) for x in spots)}", flush=True)
             self.effect_params['iris_blinder'] = {'t0': t, 'win': win,
@@ -1119,10 +1127,10 @@ class LichtwerkWebController:
         seed = self.effect_params.get('iris_bpm_period')
         ema = self.effect_params.get('iris_beat_ema')
         lk = self.effect_params.get('iris_last_kick')
-        if lk is not None and t - lk <= 1.6 and (seed or ema is not None):
-            iris_period = max(0.30, min(1.20, seed if seed else ema))
+        if lk is not None and t - lk <= IRIS['kick_stale'] and (seed or ema is not None):
+            iris_period = max(IRIS['period_min'], min(IRIS['period_max'], seed if seed else ema))
         else:
-            iris_period = 0.55
+            iris_period = IRIS['period_freerun']
         self.effect_params['iris_period_eff'] = iris_period
         if snap and t >= 0.21:
             # u == 0 right now → rising edge ON the beat.
@@ -1143,7 +1151,7 @@ class LichtwerkWebController:
         blinder = None    # None = kein Plan; sonst (an: bool, gain: float)
         blinder_wi = 0    # Index des aktiven Fensters -> dessen Spot-Liste
         blinder_decay = None   # (fenster_index, faktor 0..1) im Nachglimmen
-        BL_DECAY_S = 0.28      # Funken reissen nicht ab, sie verglimmen
+        BL_DECAY_S = IRIS['sparkle_decay']   # Funken reissen nicht ab, sie verglimmen
         if bl is not None:
             bl_t = t - bl['t0']
             if bl_t < bl['win'][-1][1] + BL_DECAY_S:
@@ -1198,7 +1206,7 @@ class LichtwerkWebController:
         # shift-out floor); without waves the tagged edge-only rewrite stays.
         waves = self.effect_params.get('iris_waves') or []
         if waves:
-            now_m = _time.monotonic()
+            now_m = mono()
             waves = [w for w in waves
                      if (t - w['born']) * (520.0 + 780.0 * w['s']) < self.strip.numPixels() / 2 + 60]
             self.effect_params['iris_waves'] = waves
@@ -1236,7 +1244,7 @@ class LichtwerkWebController:
             # Optimierung hielt die Korruption fest. Uebertragungsfehler sind
             # per-Transmission, nicht klebrig: alle 0.08 s neu senden heilt
             # jeden Slip binnen 80 ms, kostet ~15 % Wire-Duty (18 ms/Frame).
-            now_hb = _time.monotonic()
+            now_hb = mono()
             if now_hb < self.effect_params.get('iris_next_heal', 0.0):
                 return
             self.effect_params['iris_next_heal'] = now_hb + 0.08
@@ -1246,7 +1254,7 @@ class LichtwerkWebController:
         # EIN Schreibtakt fuer alle Pfade: 20 ms Boden (= die 18-ms-Drahtzeit).
         # Schneller zu wollen erzeugt nur EBUSY-Drops — und ein verworfener
         # Frame ist ein 20-ms-Fenster, in dem ein Slip-Fragment stehen bleibt.
-        now_w = _time.monotonic()
+        now_w = mono()
         if now_w - self.effect_params.get('iris_last_write', 0.0) < 0.02:
             return
         self.effect_params['iris_last_write'] = now_w
@@ -1274,26 +1282,27 @@ class LichtwerkWebController:
         if t >= 0.21 and lit and not blind_on:
             # Schattenzonen-Lebenszyklus: abgelaufene ersetzen (an neuer,
             # zufaelliger Position mit neuer Breite/Tiefe/Drift) — der Bestand
-            # bleibt bei IRIS_SHADOW_COUNT, gestaffelt durch zufaellige Leben.
+            # bleibt bei IRIS['shadow_count'], gestaffelt durch zufaellige Leben.
             pockets = self.effect_params.setdefault('iris_shadows', [])
             # 0 <= age: Zonen aus einer aelteren Zeitrechnung (iris_t0 wird je
             # Warn-Flanke resettet) waeren mit negativem Alter unsichtbare
             # Zombies, die nie sterben und den Nachschub blockieren — weg damit.
             pockets[:] = [pk for pk in pockets
                           if 0.0 <= t - pk['born'] < pk['life']]
+            rng = self.effect_params.get('iris_rng') or random
             fresh = not pockets
-            while len(pockets) < IRIS_SHADOW_COUNT:
-                life = random.uniform(IRIS_SHADOW_LIFE_MIN, IRIS_SHADOW_LIFE_MAX)
+            while len(pockets) < IRIS['shadow_count']:
+                life = rng.uniform(IRIS['shadow_life_min'], IRIS['shadow_life_max'])
                 # Initial-Kohorte rueckdatiert = sofort mitten im Leben und
                 # damit SOFORT sichtbar — die Warn-Flanke flattert bei Musik um
                 # die Schwelle, eine 1-s-Einblendzeit je Engage saehe man nie.
-                born = t - random.uniform(IRIS_SHADOW_RAMP, life * 0.6) if fresh else t
+                born = t - rng.uniform(IRIS['shadow_ramp'], life * 0.6) if fresh else t
                 pockets.append({
-                    'pos': random.uniform(0, n),
-                    'width': random.uniform(IRIS_SHADOW_W_MIN, IRIS_SHADOW_W_MAX),
-                    'depth': random.uniform(IRIS_SHADOW_DEPTH_MIN, IRIS_SHADOW_DEPTH_MAX),
+                    'pos': rng.uniform(0, n),
+                    'width': rng.uniform(IRIS['shadow_w_min'], IRIS['shadow_w_max']),
+                    'depth': rng.uniform(IRIS['shadow_depth_min'], IRIS['shadow_depth_max']),
                     'life': life,
-                    'vel': random.uniform(-IRIS_SHADOW_VEL_MAX, IRIS_SHADOW_VEL_MAX),
+                    'vel': rng.uniform(-IRIS['shadow_vel_max'], IRIS['shadow_vel_max']),
                     'born': born,
                 })
             # Wander-Glut (feine Grundtextur) x Schattenzonen, in 4er-Bloecken
@@ -1401,7 +1410,7 @@ class LichtwerkWebController:
             # Abfall ueber BL_DECAY_S) — Funken sterben, sie schalten nicht.
             spots = bl.get('spots') or ((),)
             if blinder[0]:
-                wi, gv = blinder_wi, 1.0 * blinder[1]
+                wi, gv = blinder_wi, IRIS['blinder_gain'] * blinder[1]
             elif blinder_decay is not None:
                 wi, gv = blinder_decay
             else:
@@ -1413,7 +1422,7 @@ class LichtwerkWebController:
                           f"leds={len(spots[min(wi, len(spots) - 1)])}", flush=True)
                 for j, bri in spots[min(wi, len(spots) - 1)]:
                     v = gv * bri
-                    self.strip.setPixelColor(j, Color(int(255 * v), int(205 * v), int(150 * v)))
+                    self.strip.setPixelColor(j, Color(int(IRIS['sparkle_r'] * v), int(IRIS['sparkle_g'] * v), int(IRIS['sparkle_b'] * v)))
         self.strip.show()
         self._cleared = False
 

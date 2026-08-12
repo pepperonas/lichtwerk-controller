@@ -123,7 +123,7 @@ def test_glow_factor_wanders_and_stays_in_band():
     N = 600
     for t in (0.0, 3.7, 12.4):
         vals = [wc.iris_glow_factor(x, t) for x in range(N)]
-        assert all(wc.IRIS_GLOW_MIN <= v <= 1.0 for v in vals)
+        assert all(wc.IRIS['glow_min'] <= v <= 1.0 for v in vals)
         assert max(vals) - min(vals) > 0.3, "sichtbare Modulation, nicht uniform"
     # Die hellste Stelle WANDERT: argmax verschiebt sich ueber die Zeit
     def argmax_at(t):
@@ -166,8 +166,8 @@ def test_shadow_pockets_dim_visibly_and_softly():
 def test_shadow_sizes_match_the_50_to_150_cm_request():
     """50-150 cm bei 60 LED/m = 30-90 LEDs — die Konstanten muessen die
     Nutzer-Anforderung woertlich abbilden."""
-    assert wc.IRIS_SHADOW_W_MIN == 30 and wc.IRIS_SHADOW_W_MAX == 90
-    assert 0.5 <= wc.IRIS_SHADOW_DEPTH_MIN < wc.IRIS_SHADOW_DEPTH_MAX <= 0.9
+    assert wc.IRIS['shadow_w_min'] == 30 and wc.IRIS['shadow_w_max'] == 90
+    assert 0.5 <= wc.IRIS['shadow_depth_min'] < wc.IRIS['shadow_depth_max'] <= 0.9
 
 
 def test_shadow_zombies_are_pruned_and_fresh_cohort_is_visible_immediately():
@@ -183,10 +183,47 @@ def test_shadow_zombies_are_pruned_and_fresh_cohort_is_visible_immediately():
          'vel': 0.0, 'born': 9999.0}]
     run_frames(c, 16)   # Engage + erste Sustain-Frames
     pockets = c.effect_params['iris_shadows']
-    assert len(pockets) == wc.IRIS_SHADOW_COUNT
+    assert len(pockets) == wc.IRIS['shadow_count']
     assert all(pk['born'] < 100 for pk in pockets), "Zombie muss entsorgt sein"
     # Rueckdatierung: mindestens eine Zone ist bereits voll eingeblendet
     # (Alter >= Einblendzeit) — die Kohorte ist SOFORT sichtbar.
     visible = [pk for pk in pockets
                if wc.iris_shadow_alpha(max(0.0, 0.5 - pk['born']), pk['life']) > 0.3]
     assert visible, "Initial-Kohorte muss ohne 1-s-Wartezeit sichtbar sein"
+
+
+GOLDEN_FRAME_HASH = "a38f6cdb0b2100c4fb11090ecba036ef745f80c31fb0fc6490df238564f6f446"
+
+
+def test_golden_frames_with_seed_and_fake_clock():
+    """L1-Waechter (Phase 3): Seed + injizierte Fake-Uhr => bitgenau
+    reproduzierbare Frames. Der Hash ist der Verhaltens-Fingerabdruck der
+    Baseline — JEDE unbeabsichtigte Verhaltensaenderung (auch durch kuenftige
+    Feature-Schalter im AUS-Zustand) aendert ihn und faellt hier auf.
+    Absichtliche Aenderungen pinnen einen neuen Hash MIT Begruendung."""
+    import hashlib
+    state = {"t": 100.0}
+    c = fresh()
+    c.iris_clock = lambda: state["t"]
+    wc.apply_iris_config({"seed": 1234})
+    try:
+        h = hashlib.sha256()
+
+        def frames(n):
+            for _ in range(n):
+                state["t"] += 0.02
+                c.effect_iris_warn()
+                h.update(repr(c.strip._px).encode())
+
+        frames(30)                                        # Engage + Sustain
+        c.effect_params.setdefault("iris_kicks", []).append(
+            {"s": 0.8, "bpm": 128.0})                     # Tempo-Lock + Welle
+        frames(30)
+        c.effect_params.setdefault("iris_events", []).append(
+            {"kind": "double", "gap": 0.12, "n": 2})      # Sparkle-Blinder
+        frames(40)
+        assert h.hexdigest() == GOLDEN_FRAME_HASH
+    finally:
+        wc.apply_iris_config(None)
+        if hasattr(c, "iris_clock"):
+            del c.iris_clock
