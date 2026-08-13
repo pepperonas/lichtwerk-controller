@@ -19,6 +19,24 @@ wiederholbar — die Grundlage der Offline-Verifikation).
 
 # (min, max) je numerischem Parameter — Klemm-Grenzen, nicht Geschmack.
 RANGES = {
+    # Organisches Rot-Profil (Rot-Brief 2026-08-13; docs/red-organic-plan.md)
+    "organic_attack_ms": (5.0, 40.0),
+    "organic_decay_ms": (80.0, 800.0),
+    "organic_sustain": (0.0, 0.7),
+    "organic_tail_ms": (100.0, 900.0),
+    "organic_vel_gamma": (0.3, 2.0),
+    "organic_vel_floor": (0.0, 0.6),
+    "organic_pulse_max": (2, 10),
+    "organic_spread_ms": (60.0, 600.0),
+    "organic_knee": (0.5, 0.95),
+    "organic_bed_min": (0.0, 0.3),
+    "organic_bed_max": (0.05, 0.4),
+    "organic_bass_gain": (0.0, 1.0),
+    "organic_bass_up_s": (0.03, 1.0),
+    "organic_bass_down_s": (0.1, 3.0),
+    "organic_hue_drift": (0.0, 4.0),
+    "organic_g_max": (60, 160),
+    "organic_b_max": (20, 120),
     # Rot-Puls (Atem-Huellkurve)
     "red_attack": (0.01, 0.20),
     "red_hold": (0.02, 0.40),
@@ -107,6 +125,31 @@ RANGES = {
 DEFAULTS = {
     # Reproduzierbarkeit: None = echter Zufall; int = deterministisch je Engage
     "seed": None,
+
+    # ── Organisches Rot-Profil (Rot-Brief 2026-08-13) ────────────────────
+    # "classic" = bit-identische Baseline (Golden-Frame-Hash beweist es);
+    # "organic" = Velocity + ADSR-Stack + Farbrampe + Bass-Druckwelle +
+    # Dithering. Live umschaltbar via POST /api/iris/profile. Jeder andere
+    # Wert faellt im Renderer auf classic zurueck (Tippfehler-sicher).
+    "red_profile": "classic",
+    "organic_attack_ms": 14.0,    # geformter Attack (Brief: 5-20 ms)
+    "organic_decay_ms": 240.0,    # Anfangs-Decay-Basis (x Velocity-Faktor)
+    "organic_sustain": 0.30,      # Sustain-Anteil rel. Peak
+    "organic_tail_ms": 340.0,     # Sustain-Schwanz -> Bett (Brief: 100-400)
+    "organic_vel_gamma": 0.65,    # perzeptuelle power curve Velocity->Peak
+    "organic_vel_floor": 0.18,    # zartester Schlag bleibt sichtbar
+    "organic_pulse_max": 6,       # Stapel-Kappe (Allokations-Deckel)
+    "organic_spread_ms": 180.0,   # Bloom-Expansion bis Vollabdeckung
+    "organic_knee": 0.80,         # soft-knee-Beginn der Summensaettigung
+    "organic_bed_min": 0.06,      # Glut-Bett im Breakdown
+    "organic_bed_max": 0.20,      # Glut-Bett im Groove
+    "organic_bass_gain": 0.45,    # Druckwellen-Anteil der Bassline
+    "organic_bass_up_s": 0.12,    # Bass-Attack (traege genug gegen Pumpen)
+    "organic_bass_down_s": 0.45,  # Bass-Release
+    "organic_hue_drift": 1.5,     # Gradient-Drift-Amplitude (Minuten-Periode)
+    "organic_dither": True,       # temporales Dithering (Ursache 7)
+    "organic_g_max": 140,         # Nie-Weiss-Kappe Gruen (Weiss = gesperrt)
+    "organic_b_max": 90,          # Nie-Weiss-Kappe Blau
 
     # Rot-Puls: Aufbluehen (Anteil der Periode), Vollphase, Glut-Boden.
     # 2026-08-12 Runde 3 („zu flashy — fade-in/out subtiler"): Attack

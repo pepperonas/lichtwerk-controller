@@ -14,6 +14,7 @@ except ImportError:
     from rpi_ws281x import PixelStrip, Color
 import iris_wash
 import iris_render
+import red_organic
 import math
 import random
 
@@ -409,6 +410,12 @@ class LichtwerkWebController:
         self.strip_lut_default = int(led_cfg.get('led_brightness', 255))
         # Zentrale Iris-Config (L1): Sektion "iris" aus config.json anwenden
         apply_iris_config(self.config.get('iris'))
+        # Rot-Brief 2026-08-13: Pfad fuer den Profil-Persist (/api/iris/profile)
+        # + kontinuierliche Bass-Speisung des organischen Rot-Profils.
+        # Attribute statt effect_params: ueberleben den per-Engage-Reset.
+        self.config_file = config_file
+        self._iris_bass_in = None      # letzter /api/warn_bass-Pegel (0..1)
+        self._iris_bass_ts = 0.0       # Eingangszeit (Staleness -> Ausblenden)
         # State variables
         self.running = True
         self.power = False
@@ -1169,6 +1176,156 @@ class LichtwerkWebController:
             self._show_payload(frames[min(self._wash_fade_from, len(frames) - 1)], gain)
         self._cleared = False
 
+    # ── Organisches Rot-Profil (Rot-Brief 2026-08-13) ────────────────────
+    # Mathematik in red_organic.py (pure, unit-getestet); hier nur Zustand
+    # (effect_params) + der Frame-Zusammenbau. Weiss-Pfade unberuehrt: die
+    # geteilte iris_rng wird nie angefasst (eigene iris_rng_org), `strength`
+    # bleibt fuer Drop/kick_avg bit-identisch belegt.
+
+    def _organic_kick(self, t, ks, vel=None, bass=None):
+        """Kick -> gestapelter ADSR-Puls. vel = Perzentil-Rang von disco
+        (M2); fehlt er (alter Client), traegt die rohe Staerke. Velocity
+        skaliert Peak (power curve), Decay-Dauer und Ausbreitungstempo."""
+        ep = self.effect_params
+        if bass is not None:
+            try:
+                self._iris_bass_in = max(0.0, min(1.0, float(bass)))
+                self._iris_bass_ts = time.monotonic()
+            except (TypeError, ValueError):
+                pass
+        try:
+            v = ks if vel is None else max(0.0, min(1.0, float(vel)))
+        except (TypeError, ValueError):
+            v = ks
+        rng = ep.get('iris_rng_org') or random
+        n = self.strip.numPixels() if self.strip else 0
+        if n <= 0:
+            return
+        # Harter Schlag breitet sich schneller aus (1.35-0.7v: 0.65x..1.35x)
+        t_spread = max(0.05, IRIS['organic_spread_ms'] / 1000.0 * (1.35 - 0.7 * v))
+        pulses = ep.setdefault('iris_red_pulses', [])
+        pulses.append({
+            'born': t,
+            'peak': red_organic.vel_peak(v, IRIS['organic_vel_gamma'],
+                                         IRIS['organic_vel_floor']),
+            # Ursprung Mitte-bias, nie AN der Kante (wie die Wellen, M6)
+            'origin': max(0.05, min(0.95, 0.5 + rng.gauss(0.0, 0.2))) * n,
+            'spread_v': n / t_spread,
+            'dscale': 0.7 + 0.9 * v,      # Gewicht klingt laenger aus
+        })
+        if len(pulses) > int(IRIS['organic_pulse_max']):
+            pulses.pop(0)
+
+    def _organic_gradient(self, t):
+        """Farbrampe (M4), gecacht; Hue-Drift in Minuten-Periode, auf
+        Viertelstufen quantisiert — Rebuild nur beim Stufenwechsel."""
+        ep = self.effect_params
+        amp = IRIS['organic_hue_drift'] / 31.0
+        drift = amp * math.sin(2.0 * math.pi * t / 240.0)
+        key = round(drift * 124.0)        # 1/124 ~ Viertel einer Rampenstufe
+        if ep.get('iris_grad') is None or ep.get('iris_grad_key') != key:
+            ep['iris_grad'] = red_organic.build_gradient(
+                32, IRIS['organic_g_max'], IRIS['organic_b_max'],
+                key / 124.0)
+            ep['iris_grad_key'] = key
+        return ep['iris_grad']
+
+    def _organic_blocks(self, t, n, glow_tbl, scale, duck_f, freerun_now):
+        """Per-4er-Block: Bett + gestapelte Pulse (mit Herkunft) + Bass-
+        Druckwelle -> screen-kombiniert -> Farbrampe -> Dithering.
+
+        Rueckgabe: (float-RGB je Block fuer die Wellen-Basis,
+        gepackte Color-Ints je Block fuer den Fill)."""
+        ep = self.effect_params
+        last = ep.get('iris_org_last_t')
+        dt = min(0.1, max(0.0, t - last)) if last is not None else 0.02
+        ep['iris_org_last_t'] = t
+        frame = ep.get('iris_frame_no', 0) + 1
+        ep['iris_frame_no'] = frame
+
+        # M1: Bassline-Envelope — asymmetrischer One-Pole auf den letzten
+        # /api/warn_bass-Pegel; ohne frische Speisung (>3 s) blendet er aus.
+        target = self._iris_bass_in if self._iris_bass_in is not None else 0.0
+        if time.monotonic() - self._iris_bass_ts > 3.0:
+            target = 0.0
+        env = red_organic.one_pole(ep.get('iris_bass_env', 0.0), target, dt,
+                                   IRIS['organic_bass_up_s'],
+                                   IRIS['organic_bass_down_s'])
+        ep['iris_bass_env'] = env
+        # M7: traege Energie (tau 4 s) -> Bett-Pegel (Breakdown dunkel)
+        e_src = max(env, float(ep.get('iris_kick_avg', 0.0) or 0.0))
+        e = red_organic.one_pole(ep.get('iris_energy_ema', 0.0), e_src,
+                                 dt, 4.0, 4.0)
+        ep['iris_energy_ema'] = e
+        bed = red_organic.bed_level(e, IRIS['organic_bed_min'],
+                                    IRIS['organic_bed_max'])
+
+        # M3: Pulse pflegen + je Puls (Wert, Ursprung, Reichweite) vorrechnen
+        atk = IRIS['organic_attack_ms'] / 1000.0
+        dec = IRIS['organic_decay_ms'] / 1000.0
+        sus = IRIS['organic_sustain']
+        tail = IRIS['organic_tail_ms'] / 1000.0
+        pulses = ep.setdefault('iris_red_pulses', [])
+        # Zombie-Doktrin: negatives Alter (t0-Reset je Flanke) wird entsorgt
+        pulses[:] = [p for p in pulses
+                     if 0.0 <= t - p['born']
+                     and not red_organic.pulse_dead(
+                         t - p['born'], atk, dec * p['dscale'], sus, tail)]
+        edge = n * 0.15
+        live = []
+        for p in pulses:
+            age = t - p['born']
+            e_p = p['peak'] * red_organic.pulse_env(
+                age, atk, dec * p['dscale'], sus, tail)
+            if e_p > 0.004:
+                live.append((e_p, p['origin'], age * p['spread_v']))
+
+        grad = self._organic_gradient(t)
+        knee = IRIS['organic_knee']
+        gain_b = IRIS['organic_bass_gain']
+        dith = IRIS['organic_dither']
+        inv_n = 1.0 / max(1, n)
+        nb = len(glow_tbl)
+        rgb_out = []
+        col_out = []
+        _cover = red_organic.pulse_cover
+        _press = red_organic.bass_press
+        _knee = red_organic.soft_knee
+        _h01 = red_organic.hash01
+        for b in range(nb):
+            x = b * 4 + 1.5
+            acc = 0.0
+            for e_p, org, reach in live:
+                acc += e_p * _cover(abs(x - org), reach, edge)
+            press = _press(x * inv_n, env, gain_b)
+            v = 1.0 - (1.0 - bed) * (1.0 - _knee(acc, knee)) * (1.0 - press)
+            v *= glow_tbl[b] * duck_f
+            if v <= 0.0:
+                rgb_out.append((0.0, 0.0, 0.0))
+                col_out.append(0)
+                continue
+            fi = min(0.999999, v) * 31.0
+            i0 = int(fi)
+            fr = fi - i0
+            g0 = grad[i0]
+            g1 = grad[i0 + 1] if i0 < 31 else g0
+            # rgb_out UNSKALIERT (die Wellen-Schleife multipliziert beim
+            # Schreiben selbst x scale — wie die classic-Basis); nur die
+            # gepackten Fill-Farben tragen scale + Dithering.
+            rf = g0[0] + (g1[0] - g0[0]) * fr
+            gf = g0[1] + (g1[1] - g0[1]) * fr
+            bf = g0[2] + (g1[2] - g0[2]) * fr
+            rgb_out.append((rf, gf, bf))
+            rs, gs, bs = rf * scale, gf * scale, bf * scale
+            if dith:
+                col_out.append(Color(
+                    red_organic.dither8(rs, _h01(b, frame, 0)),
+                    red_organic.dither8(gs, _h01(b, frame, 1)),
+                    red_organic.dither8(bs, _h01(b, frame, 2))))
+            else:
+                col_out.append(Color(int(rs + 0.5), int(gs + 0.5), int(bs + 0.5)))
+        return rgb_out, col_out
+
     def effect_iris_warn(self):
         """Hard Iris blitz — LED translation of dB-Analyse `over-iris`.
 
@@ -1274,6 +1431,21 @@ class LichtwerkWebController:
             self.effect_params['iris_freerun_f'] = 1.0
             self.effect_params['iris_drop_at'] = -1e9    # Cooldown 8 s — Bomben sind rar
             self.effect_params['iris_last_write'] = 0.0  # EIN Schreibtakt fuer ALLE Pfade
+            # ── Organisches Rot-Profil (Rot-Brief 2026-08-13) ──
+            # EIGENE RNG (seed+1): die geteilte iris_rng speist die Sparkle-
+            # Spot-Positionen (Weiss = gesperrt) — organische Wuerfe duerfen
+            # deren Ziehungssequenz nie verschieben, sonst waeren Weiss-
+            # Frames zwischen den Profilen nicht mehr byte-identisch.
+            _seed = IRIS['seed']
+            self.effect_params['iris_rng_org'] = random.Random(
+                _seed + 1 if isinstance(_seed, int) else None)
+            self.effect_params['iris_red_pulses'] = []   # ADSR-Stack (M3)
+            self.effect_params['iris_bass_env'] = 0.0    # getraegte Bassline (M1)
+            self.effect_params['iris_energy_ema'] = 0.0  # Bett-Kopplung (M7)
+            self.effect_params['iris_org_last_t'] = None
+            self.effect_params['iris_frame_no'] = 0      # Dither-Taktzaehler
+            self.effect_params['iris_grad'] = None       # Farbrampe (M4), lazy
+            self.effect_params['iris_grad_key'] = None
         t = mono() - t0
 
         # ── Kick intake (Flask thread appends plain floats; GIL-safe pops) ──
@@ -1284,9 +1456,11 @@ class LichtwerkWebController:
                 item = q.pop(0)
             except IndexError:
                 break
-            kb = None
+            kb = kvel = kbass = None
             if isinstance(item, dict):
                 kb = item.get('bpm')
+                kvel = item.get('vel')    # Perzentil-Velocity (nur Rot, M2)
+                kbass = item.get('bass')  # Bassline-Snapshot (nur Rot, M1)
                 item = item.get('s')
             try:
                 ks = max(0.0, min(1.0, float(item)))
@@ -1343,6 +1517,11 @@ class LichtwerkWebController:
             waves.append(wv)
             if len(waves) > 3:
                 waves.pop(0)
+            # Organisch: jeder Kick wird ein gestapelter ADSR-Puls. `strength`
+            # bleibt fuer Drop/kick_avg/Wellen bit-identisch belegt (Weiss!);
+            # vel/bass sind ZUSAETZLICHE Felder nur fuer den roten Pfad.
+            if IRIS.get('red_profile') == 'organic':
+                self._organic_kick(t, ks, kvel, kbass)
 
         # ── Weiss-Event-Intake (2026-08-09): double/roll/accent von disco ──
         # Weiss ist Interpunktion: der Vollflaechen-Blinder feuert nur noch
@@ -1636,6 +1815,11 @@ class LichtwerkWebController:
                     self.effect_params['iris_freerun_f'] = iris_freerun_walk(
                         self.effect_params.get('iris_freerun_f', 1.0),
                         IRIS['freerun_jitter'], rng.uniform(-1.0, 1.0))
+                if freerun_now and IRIS.get('red_profile') == 'organic':
+                    # Ohne Kicks spawnt der Perioden-Wrap sanfte Pulse —
+                    # das Bild bleibt lebendig wie der getaggte Freilauf.
+                    rng_o = self.effect_params.get('iris_rng_org') or random
+                    self._organic_kick(t, rng_o.uniform(0.35, 0.55))
 
         if blinder is not None and not meteor_on:
             # Klassische Blinder: Rot AUS in Dunkelfenstern. Meteor-Plaene
@@ -1759,6 +1943,13 @@ class LichtwerkWebController:
                         for b in range(0, n, 4)]
         # duck_f ist 1.0 ausserhalb von Meteor-Plaenen (x*1.0 == x, bit-exakt).
         red_env *= duck_f
+        # Organisches Rot-Profil (Rot-Brief 2026-08-13): per-Block-Feld mit
+        # Farbrampe statt Skalar x Einheitsfarbe. classic laesst org_* None —
+        # der Golden-Frame-Hash beweist die Bit-Identitaet des Rollbacks.
+        org_rgb = org_cols = None
+        if glow_tbl is not None and IRIS.get('red_profile') == 'organic':
+            org_rgb, org_cols = self._organic_blocks(
+                t, n, glow_tbl, scale, duck_f, freerun_now)
         c = Color(int(hr * scale * red_env), int(hg * scale * red_env), int(hb * scale * red_env))
         dark = Color(0, 0, 0)
         # SPARKLE-Blinder (Nutzerentscheid 2026-08-10, ersetzt das
@@ -1773,7 +1964,12 @@ class LichtwerkWebController:
         # Warmweiss; der Schwarz-Kontrast macht den Blitz. Vollflaechen-
         # Kaltweiss braucht beidseitige Stromeinspeisung (Hardware).
         base = dark if (blind_on and not meteor_on) else (c if lit else dark)
-        if glow_tbl is not None:
+        if org_cols is not None:
+            # Organisch: Blockfarbe vorberechnet (inkl. Rampe + Dithering) —
+            # der per-Pixel-Teil ist BILLIGER als classic (0 Muls/Pixel).
+            for i in range(n):
+                self.strip.setPixelColor(i, org_cols[i >> 2])
+        elif glow_tbl is not None:
             # Rot atmet zeitlich (red_env) UND wandert raeumlich (glow_tbl)
             sc = scale * red_env
             for i in range(n):
@@ -1826,8 +2022,14 @@ class LichtwerkWebController:
                     if halo <= 0.02:
                         continue
                     core = cool * w['s'] * (2.718281828 ** (-(d * d) / (2.0 * cw * cw)))
-                    gf = red_env * (glow_tbl[i >> 2] if glow_tbl is not None else 1.0)
-                    br, bg_, bb = (hr * gf, hg * gf, hb * gf) if lit else (0, 0, 0)
+                    if org_rgb is not None:
+                        # Organisch: Wellen blenden von der ECHTEN Blockfarbe
+                        # aus (Rampe inklusive) — sonst spraenge die Basis
+                        # unter dem Halo auf den classic-Farbort zurueck.
+                        br, bg_, bb = (org_rgb[i >> 2] if lit else (0.0, 0.0, 0.0))
+                    else:
+                        gf = red_env * (glow_tbl[i >> 2] if glow_tbl is not None else 1.0)
+                        br, bg_, bb = (hr * gf, hg * gf, hb * gf) if lit else (0, 0, 0)
                     r_ = br + (xr - br) * halo
                     g_ = bg_ + (xg - bg_) * halo
                     b_ = bb + (xb - bb) * halo
@@ -2327,6 +2529,53 @@ def warn_event_evt():
             evq.append(ev)
         controller.wake_effect()
     return jsonify({'status': 'ok'})
+
+
+@app.route('/api/warn_bass', methods=['POST'])
+def warn_bass_evt():
+    """Kontinuierlicher Bassline-Pegel von disco (<= 5 Hz, delta-gated).
+
+    Rot-Brief M1: Kick = Impuls (Welle/Puls), Bassline = Pegel (Druckwelle) —
+    die Trennung transient vs. tonal. Additiver 6. POST des Trigger-
+    Kontrakts; ausserhalb des organischen Profils wirkungslos (der classic-
+    Malpfad liest den Wert nie). Attribut statt effect_params: ueberlebt
+    den per-Engage-Reset."""
+    data = request.get_json() or {}
+    try:
+        lvl = max(0.0, min(1.0, float(data.get('level', 0.0))))
+    except (TypeError, ValueError):
+        lvl = 0.0
+    controller._iris_bass_in = lvl
+    controller._iris_bass_ts = time.monotonic()
+    return jsonify({'status': 'ok'})
+
+
+@app.route('/api/iris/profile', methods=['GET', 'POST'])
+def iris_profile():
+    """A/B-Umschaltung des Rot-Profils, live + persistent.
+
+    POST {"profile": "organic"|"classic"} wirkt SOFORT (IRIS wird neu
+    geladen; der Effekt-Loop liest je Frame) und schreibt die config.json
+    atomar (tmp + os.replace) — der Zustand ueberlebt den Restart. GET
+    liefert das aktive Profil. Der Rollback-Pfad aus dem Rot-Brief."""
+    if request.method == 'POST':
+        p = str((request.get_json() or {}).get('profile', '')).strip().lower()
+        if p not in ('classic', 'organic'):
+            return jsonify({'error': 'profile muss classic|organic sein'}), 400
+        sec = dict(controller.config.get('iris') or {})
+        sec['red_profile'] = p
+        controller.config['iris'] = sec
+        apply_iris_config(sec)
+        try:
+            tmp = controller.config_file + '.tmp'
+            with open(tmp, 'w') as f:
+                json.dump(controller.config, f, indent=2)
+            os.replace(tmp, controller.config_file)
+        except OSError as e:
+            print(f"iris_profile: config.json nicht geschrieben: {e}")
+        controller.wake_effect()
+        print(f"rot-profil umgeschaltet: {p}", flush=True)
+    return jsonify({'profile': IRIS.get('red_profile', 'classic')})
 
 
 @app.route('/api/warn_mode', methods=['POST'])
