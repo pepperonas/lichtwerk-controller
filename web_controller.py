@@ -15,6 +15,7 @@ except ImportError:
 import iris_wash
 import iris_render
 import red_organic
+import tempo_base
 import math
 import random
 
@@ -416,6 +417,11 @@ class LichtwerkWebController:
         self.config_file = config_file
         self._iris_bass_in = None      # letzter /api/warn_bass-Pegel (0..1)
         self._iris_bass_ts = 0.0       # Eingangszeit (Staleness -> Ausblenden)
+        # Tempo-Brief 2026-08-13: TempoBase lebt am CONTROLLER (nicht in
+        # effect_params) — BPM-Kontinuitaet muss flatternde Warn-Flanken
+        # ueberleben. Gefuettert nur unter organic+tempo; sonst 0 Kosten.
+        self._tempo = tempo_base.TempoBase()
+        self._tempo_state = None       # tick()-Dict des aktuellen Frames
         # State variables
         self.running = True
         self.power = False
@@ -1182,10 +1188,22 @@ class LichtwerkWebController:
     # geteilte iris_rng wird nie angefasst (eigene iris_rng_org), `strength`
     # bleibt fuer Drop/kick_avg bit-identisch belegt.
 
+    def _spark_window(self, rng):
+        """Funkenfenster — unter organic+tempo beat-skaliert (hart geklemmt)."""
+        w = iris_spark_window(rng, IRIS['wave_variety'])
+        if self._tempo_state is not None:
+            w = max(0.025, min(0.12, w * self._tempo_state['f']))
+        return w
+
     def _organic_kick(self, t, ks, vel=None, bass=None):
         """Kick -> gestapelter ADSR-Puls. vel = Perzentil-Rang von disco
         (M2); fehlt er (alter Client), traegt die rohe Staerke. Velocity
-        skaliert Peak (power curve), Decay-Dauer und Ausbreitungstempo."""
+        skaliert Peak (power curve), Decay-Dauer und Ausbreitungstempo.
+
+        Tempo-Brief: die ZEITEN werden HIER, beim Spawn, eingefroren
+        (atk/dec/tail/spread je Puls) — eine Tempo-Rampe skaliert laufende
+        Huellkurven nie rueckwirkend um. _tempo_state None => Faktoren
+        exakt 1.0 = der abgenommene fixed-Stand."""
         ep = self.effect_params
         if bass is not None:
             try:
@@ -1201,27 +1219,48 @@ class LichtwerkWebController:
         n = self.strip.numPixels() if self.strip else 0
         if n <= 0:
             return
+        ts = self._tempo_state
+        f = ts['f'] if ts else 1.0
+        stretch = ts['stretch'] if ts else 1.0
+        peak_f = ts['peak'] if ts else 1.0
+        thin = self._tempo.thin_factor(IRIS, v) if ts else 1.0
+        dscale = 0.7 + 0.9 * v                # Gewicht klingt laenger aus
         # Harter Schlag breitet sich schneller aus (1.35-0.7v: 0.65x..1.35x)
-        t_spread = max(0.05, IRIS['organic_spread_ms'] / 1000.0 * (1.35 - 0.7 * v))
+        spread_ms = max(60.0, min(600.0, IRIS['organic_spread_ms'] * f))
+        t_spread = max(0.05, spread_ms / 1000.0 * (1.35 - 0.7 * v))
         pulses = ep.setdefault('iris_red_pulses', [])
         pulses.append({
             'born': t,
             'peak': red_organic.vel_peak(v, IRIS['organic_vel_gamma'],
-                                         IRIS['organic_vel_floor']),
+                                         IRIS['organic_vel_floor'])
+            * peak_f * thin,
             # Ursprung Mitte-bias, nie AN der Kante (wie die Wellen, M6)
             'origin': max(0.05, min(0.95, 0.5 + rng.gauss(0.0, 0.2))) * n,
             'spread_v': n / t_spread,
-            'dscale': 0.7 + 0.9 * v,      # Gewicht klingt laenger aus
+            'dscale': dscale,
+            # Beat-Zeitbasis, beim Spawn eingefroren (Sekunden, geklemmt):
+            'atk': max(0.005, min(0.040, IRIS['organic_attack_ms'] / 1000.0
+                                  * (f ** IRIS['tempo_attack_exp']) * stretch)),
+            'dec': max(0.080, min(0.800, IRIS['organic_decay_ms'] / 1000.0
+                                  * f * stretch)) * dscale,
+            'tail': max(0.100, min(0.900, IRIS['organic_tail_ms'] / 1000.0
+                                   * f * stretch)),
         })
         if len(pulses) > int(IRIS['organic_pulse_max']):
             pulses.pop(0)
 
     def _organic_gradient(self, t):
         """Farbrampe (M4), gecacht; Hue-Drift in Minuten-Periode, auf
-        Viertelstufen quantisiert — Rebuild nur beim Stufenwechsel."""
+        Viertelstufen quantisiert — Rebuild nur beim Stufenwechsel.
+        Tempo-Brief: Drift-Periode x F (auf 10-s-Stufen quantisiert, damit
+        die Phase nicht je Frame springt)."""
         ep = self.effect_params
         amp = IRIS['organic_hue_drift'] / 31.0
-        drift = amp * math.sin(2.0 * math.pi * t / 240.0)
+        period = 240.0
+        if self._tempo_state is not None:
+            period = round(max(120.0, min(480.0,
+                                          240.0 * self._tempo_state['f'])) / 10.0) * 10.0
+        drift = amp * math.sin(2.0 * math.pi * t / period)
         key = round(drift * 124.0)        # 1/124 ~ Viertel einer Rampenstufe
         if ep.get('iris_grad') is None or ep.get('iris_grad_key') != key:
             ep['iris_grad'] = red_organic.build_gradient(
@@ -1252,31 +1291,40 @@ class LichtwerkWebController:
                                    IRIS['organic_bass_up_s'],
                                    IRIS['organic_bass_down_s'])
         ep['iris_bass_env'] = env
-        # M7: traege Energie (tau 4 s) -> Bett-Pegel (Breakdown dunkel)
+        # M7: traege Energie (tau 4 s ~ 2 Takte @120; tempo-skaliert) ->
+        # Bett-Pegel (Breakdown dunkel)
+        ts = self._tempo_state
+        tau_e = 4.0 if ts is None else max(1.5, min(8.0, 4.0 * ts['f']))
         e_src = max(env, float(ep.get('iris_kick_avg', 0.0) or 0.0))
         e = red_organic.one_pole(ep.get('iris_energy_ema', 0.0), e_src,
-                                 dt, 4.0, 4.0)
+                                 dt, tau_e, tau_e)
         ep['iris_energy_ema'] = e
         bed = red_organic.bed_level(e, IRIS['organic_bed_min'],
                                     IRIS['organic_bed_max'])
 
-        # M3: Pulse pflegen + je Puls (Wert, Ursprung, Reichweite) vorrechnen
-        atk = IRIS['organic_attack_ms'] / 1000.0
-        dec = IRIS['organic_decay_ms'] / 1000.0
+        # M3: Pulse pflegen + je Puls (Wert, Ursprung, Reichweite) vorrechnen.
+        # Zeiten kommen PRO PULS (beim Spawn eingefroren, Tempo-Brief);
+        # die Defaults decken Alt-Pulse ueber einen Timing-Umschalt-Moment.
+        atk_d = IRIS['organic_attack_ms'] / 1000.0
+        dec_d = IRIS['organic_decay_ms'] / 1000.0
         sus = IRIS['organic_sustain']
-        tail = IRIS['organic_tail_ms'] / 1000.0
+        tail_d = IRIS['organic_tail_ms'] / 1000.0
         pulses = ep.setdefault('iris_red_pulses', [])
         # Zombie-Doktrin: negatives Alter (t0-Reset je Flanke) wird entsorgt
         pulses[:] = [p for p in pulses
                      if 0.0 <= t - p['born']
                      and not red_organic.pulse_dead(
-                         t - p['born'], atk, dec * p['dscale'], sus, tail)]
+                         t - p['born'], p.get('atk', atk_d),
+                         p.get('dec', dec_d * p['dscale']), sus,
+                         p.get('tail', tail_d))]
         edge = n * 0.15
         live = []
         for p in pulses:
             age = t - p['born']
             e_p = p['peak'] * red_organic.pulse_env(
-                age, atk, dec * p['dscale'], sus, tail)
+                age, p.get('atk', atk_d),
+                p.get('dec', dec_d * p['dscale']), sus,
+                p.get('tail', tail_d))
             if e_p > 0.004:
                 live.append((e_p, p['origin'], age * p['spread_v']))
 
@@ -1448,6 +1496,20 @@ class LichtwerkWebController:
             self.effect_params['iris_grad_key'] = None
         t = mono() - t0
 
+        # ── Tempo-Skalierung (Tempo-Brief 2026-08-13): NUR organic+tempo.
+        # Sonst bleibt _tempo_state None und jeder Faktor unten ist exakt
+        # 1.0 — der 120-BPM-Anker-Test pinnt die Bit-Identitaet von
+        # red_timing=fixed. Quellen-Wechsel (live/stale/fallback) loggen.
+        if IRIS.get('red_profile') == 'organic' \
+                and IRIS.get('red_timing') == 'tempo':
+            prev_src = self._tempo.source
+            self._tempo_state = self._tempo.tick(IRIS, mono())
+            if self._tempo.source != prev_src:
+                print(f"tempo-quelle: {prev_src} -> {self._tempo.source} "
+                      f"(bpm_eff {self._tempo.bpm_eff:.0f})", flush=True)
+        else:
+            self._tempo_state = None
+
         # ── Kick intake (Flask thread appends plain floats; GIL-safe pops) ──
         q = self.effect_params.get('iris_kicks')
         snap = False
@@ -1491,11 +1553,14 @@ class LichtwerkWebController:
             # Refractory 0.24 s: on_beat fires on EVERY onset (snares/offbeats
             # included), and a snap per onset re-lights the window until the
             # dark phase collapses — the measured "verharrt" failure.
-            if t - self.effect_params.get('iris_last_snap', -9.0) >= IRIS['snap_refractory']:
+            refr = IRIS['snap_refractory']
+            if self._tempo_state is not None:
+                refr = max(0.10, min(0.50, refr * self._tempo_state['f']))
+            if t - self.effect_params.get('iris_last_snap', -9.0) >= refr:
                 self.effect_params['iris_last_snap'] = t
                 snap = True
-            self.effect_params['iris_spark_until'] = t + iris_spark_window(
-                self.effect_params.get('iris_rng') or random, IRIS['wave_variety'])
+            self.effect_params['iris_spark_until'] = t + self._spark_window(
+                self.effect_params.get('iris_rng') or random)
             self.effect_params['iris_kick_boost'] = ks
             avg = self.effect_params.get('iris_kick_avg', 0.0)
             self.effect_params['iris_kick_avg'] = avg + (ks - avg) * 0.15
@@ -1514,6 +1579,14 @@ class LichtwerkWebController:
             wv = iris_wave_spawn(self.effect_params.get('iris_rng') or random,
                                  ks, IRIS['wave_variety'])
             wv['born'] = t
+            if self._tempo_state is not None:
+                # Teil B: Wellen in LED/Beat statt LED/s — Tempo x F^-1,
+                # Breite mild (F^0.5), beides hart geklemmt.
+                _f = self._tempo_state['f']
+                v0 = wv.get('v') or (520.0 + 780.0 * ks)
+                wv['v'] = max(300.0, min(3000.0, v0 / _f))
+                w0 = wv.get('width') or (12.0 + 24.0 * ks)
+                wv['width'] = max(8.0, min(48.0, w0 * (_f ** 0.5)))
             waves.append(wv)
             if len(waves) > 3:
                 waves.pop(0)
@@ -1521,6 +1594,8 @@ class LichtwerkWebController:
             # bleibt fuer Drop/kick_avg/Wellen bit-identisch belegt (Weiss!);
             # vel/bass sind ZUSAETZLICHE Felder nur fuer den roten Pfad.
             if IRIS.get('red_profile') == 'organic':
+                if self._tempo_state is not None:
+                    self._tempo.note_kick(IRIS, t0 + t, kb, ks)
                 self._organic_kick(t, ks, kvel, kbass)
 
         # ── Weiss-Event-Intake (2026-08-09): double/roll/accent von disco ──
@@ -1717,7 +1792,10 @@ class LichtwerkWebController:
         seed = self.effect_params.get('iris_bpm_period')
         ema = self.effect_params.get('iris_beat_ema')
         lk = self.effect_params.get('iris_last_kick')
-        freerun_now = not (lk is not None and t - lk <= IRIS['kick_stale']
+        stale_s = IRIS['kick_stale']
+        if self._tempo_state is not None:
+            stale_s = max(1.0, min(4.0, stale_s * self._tempo_state['f']))
+        freerun_now = not (lk is not None and t - lk <= stale_s
                            and (seed or ema is not None))
         if not freerun_now:
             iris_period = max(IRIS['period_min'], min(IRIS['period_max'], seed if seed else ema))
@@ -1785,6 +1863,11 @@ class LichtwerkWebController:
         red_env = 1.0
         if t < 0.21:
             ew = self.effect_params.get('iris_engage_win') or (0.07, 0.13)
+            if self._tempo_state is not None:
+                # Signatur nur KAUM skalieren (Charakter gesperrt): F^0.3,
+                # geklemmt — der Doppelpuls bleibt der Doppelpuls.
+                _e = self._tempo_state['engage']
+                ew = (min(0.10, ew[0] * _e), min(0.19, ew[1] * _e))
             lit = not (ew[0] <= t < ew[1])
         else:
             # Atmen statt Rechteck (2026-08-11): Periode bleibt tempo-gelockt
@@ -1808,8 +1891,8 @@ class LichtwerkWebController:
             if prev_u is not None and u < prev_u - 0.5:
                 # Perioden-Wrap = Schlagmoment -> Funkenfenster (Freilauf;
                 # echte Kicks armieren es ohnehin im Intake)
-                self.effect_params['iris_spark_until'] = t + iris_spark_window(
-                self.effect_params.get('iris_rng') or random, IRIS['wave_variety'])
+                self.effect_params['iris_spark_until'] = t + self._spark_window(
+                    self.effect_params.get('iris_rng') or random)
                 if freerun_now and IRIS['freerun_jitter'] > 0.0:
                     rng = self.effect_params.get('iris_rng') or random
                     self.effect_params['iris_freerun_f'] = iris_freerun_walk(
@@ -1828,8 +1911,8 @@ class LichtwerkWebController:
         last = self.effect_params.get('iris_lit')
         if lit and last is not True:
             # Rising edge → arm a ~55 ms white-spark window
-            self.effect_params['iris_spark_until'] = t + iris_spark_window(
-                self.effect_params.get('iris_rng') or random, IRIS['wave_variety'])
+            self.effect_params['iris_spark_until'] = t + self._spark_window(
+                self.effect_params.get('iris_rng') or random)
         spark = bool(lit and t < float(self.effect_params.get('iris_spark_until') or 0))
         last_spark = self.effect_params.get('iris_sparking')
 
@@ -1925,6 +2008,10 @@ class LichtwerkWebController:
             fresh = not pockets
             while len(pockets) < IRIS['shadow_count']:
                 life = rng.uniform(IRIS['shadow_life_min'], IRIS['shadow_life_max'])
+                if self._tempo_state is not None:
+                    # Schattenzonen atmen im Takt-Vielfachen (mild, F^0.7)
+                    life = max(2.0, min(15.0,
+                                        life * self._tempo_state['f'] ** 0.7))
                 # Initial-Kohorte rueckdatiert = sofort mitten im Leben und
                 # damit SOFORT sichtbar — die Warn-Flanke flattert bei Musik um
                 # die Schwelle, eine 1-s-Einblendzeit je Engage saehe man nie.
@@ -2386,6 +2473,12 @@ class LichtwerkWebController:
             'iris_beat_s': (round(self.effect_params['iris_period_eff'], 3)
                             if self.current_effect == 'iris_warn'
                             and self.effect_params.get('iris_period_eff') else None),
+            # Tempo-Brief: Telemetrie der musikalischen Zeitbasis (rein aus
+            # dem Speicher; None wenn red_timing fixed oder profile classic)
+            'red_timing': IRIS.get('red_timing', 'fixed'),
+            'tempo': (self._tempo.status(IRIS)
+                      if IRIS.get('red_profile') == 'organic'
+                      and IRIS.get('red_timing') == 'tempo' else None),
             'theater_rainbow': self.theater_rainbow,
             'led_count': self.strip.numPixels() if self.strip else 50,
             'pin': self.config['led_config']['pin']
@@ -2559,11 +2652,20 @@ def iris_profile():
     atomar (tmp + os.replace) — der Zustand ueberlebt den Restart. GET
     liefert das aktive Profil. Der Rollback-Pfad aus dem Rot-Brief."""
     if request.method == 'POST':
-        p = str((request.get_json() or {}).get('profile', '')).strip().lower()
-        if p not in ('classic', 'organic'):
+        data = request.get_json() or {}
+        p = str(data.get('profile', '') or '').strip().lower()
+        tm = str(data.get('timing', '') or '').strip().lower()
+        if not p and not tm:
+            return jsonify({'error': 'profile und/oder timing angeben'}), 400
+        if p and p not in ('classic', 'organic'):
             return jsonify({'error': 'profile muss classic|organic sein'}), 400
+        if tm and tm not in ('fixed', 'tempo'):
+            return jsonify({'error': 'timing muss fixed|tempo sein'}), 400
         sec = dict(controller.config.get('iris') or {})
-        sec['red_profile'] = p
+        if p:
+            sec['red_profile'] = p
+        if tm:
+            sec['red_timing'] = tm
         controller.config['iris'] = sec
         apply_iris_config(sec)
         try:
@@ -2574,8 +2676,10 @@ def iris_profile():
         except OSError as e:
             print(f"iris_profile: config.json nicht geschrieben: {e}")
         controller.wake_effect()
-        print(f"rot-profil umgeschaltet: {p}", flush=True)
-    return jsonify({'profile': IRIS.get('red_profile', 'classic')})
+        print(f"rot-profil umgeschaltet: profile={IRIS.get('red_profile')} "
+              f"timing={IRIS.get('red_timing')}", flush=True)
+    return jsonify({'profile': IRIS.get('red_profile', 'classic'),
+                    'timing': IRIS.get('red_timing', 'fixed')})
 
 
 @app.route('/api/warn_mode', methods=['POST'])

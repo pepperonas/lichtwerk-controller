@@ -19,6 +19,26 @@ wiederholbar — die Grundlage der Offline-Verifikation).
 
 # (min, max) je numerischem Parameter — Klemm-Grenzen, nicht Geschmack.
 RANGES = {
+    # Tempo-Skalierung (Tempo-Brief 2026-08-13; docs/tempo-scaling-plan.md)
+    "tempo_ref": (100.0, 140.0),
+    "tempo_exp": (0.3, 1.0),
+    "tempo_attack_exp": (0.5, 2.0),
+    "tempo_ramp_s": (0.5, 5.0),
+    "tempo_stale_s": (1.0, 10.0),
+    "tempo_fallback_s": (5.0, 60.0),
+    "tempo_jump_confirm": (1, 6),
+    "thin_on_bpm": (130.0, 190.0),
+    "thin_off_bpm": (125.0, 185.0),
+    "thin_damp": (0.2, 1.0),
+    "thin_strong_pct": (0.5, 0.95),
+    "thin_dwell_s": (1.0, 15.0),
+    "move_tau_s": (0.5, 8.0),
+    "move_calm_stretch": (1.0, 2.5),
+    "move_peak_min": (0.5, 1.0),
+    "zone70": (0.5, 1.6),
+    "zone100": (0.5, 1.6),
+    "zone140": (0.5, 1.6),
+    "zone170": (0.5, 1.6),
     # Organisches Rot-Profil (Rot-Brief 2026-08-13; docs/red-organic-plan.md)
     "organic_attack_ms": (5.0, 40.0),
     "organic_decay_ms": (80.0, 800.0),
@@ -132,6 +152,33 @@ DEFAULTS = {
     # Dithering. Live umschaltbar via POST /api/iris/profile. Jeder andere
     # Wert faellt im Renderer auf classic zurueck (Tippfehler-sicher).
     "red_profile": "classic",
+
+    # ── Tempo-Skalierung (Tempo-Brief 2026-08-13) ────────────────────────
+    # "fixed" = Code-Default = exakt der abgenommene organic-Stand (der
+    # 120-BPM-Anker-Test pinnt Bit-Identitaet); "tempo" = Beat-Zeitbasis
+    # F=(tempo_ref/bpm_eff)^tempo_exp + Zonen + Bewegungsrate. Wirkt NUR
+    # im organic-Profil; classic bleibt unberuehrt. Live umschaltbar via
+    # POST /api/iris/profile {"timing": ...}.
+    "red_timing": "fixed",
+    "tempo_ref": 120.0,        # der Anker, an dem sich nichts aendern darf
+    "tempo_exp": 0.7,          # gedaempfte Kurve (1.0 = proportional = flackert)
+    "tempo_attack_exp": 1.3,   # Attack skaliert staerker (langsam weicher)
+    "tempo_ramp_s": 1.5,       # Tempo-Uebernahme als Rampe, nie als Sprung
+    "tempo_stale_s": 3.0,      # ohne Kicks: Wert gilt als veraltet
+    "tempo_fallback_s": 15.0,  # danach sanfte Rueckfuehrung auf tempo_ref
+    "tempo_jump_confirm": 3,   # Oktav-/Sprung-Korrektur erst nach N Kicks
+    "thin_on_bpm": 150.0,      # Ausduennen an (Hysterese-Paar + Verweildauer)
+    "thin_off_bpm": 145.0,
+    "thin_damp": 0.45,         # Zwischenschlag-Peak-Faktor
+    "thin_strong_pct": 0.70,   # >= P70 der letzten Kicks spielt trotzdem voll
+    "thin_dwell_s": 4.0,
+    "move_tau_s": 2.0,         # Bewegungsrate traege (kein Flattern)
+    "move_calm_stretch": 1.5,  # Breakdown: Decay/Tail bis x1.5
+    "move_peak_min": 0.75,     # Breakdown: Impuls-Peak bis x0.75
+    "zone70": 1.35,            # getragen — Impulse gehen ins Atmen ueber
+    "zone100": 1.12,           # groovig, weiche Kanten
+    "zone140": 0.88,           # straffer Puls (115-135 bleibt per Anker 1.0)
+    "zone170": 0.75,           # + Ausduennen statt Beschleunigen
     "organic_attack_ms": 14.0,    # geformter Attack (Brief: 5-20 ms)
     "organic_decay_ms": 240.0,    # Anfangs-Decay-Basis (x Velocity-Faktor)
     "organic_sustain": 0.30,      # Sustain-Anteil rel. Peak
