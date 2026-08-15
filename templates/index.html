@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Lichtwerk Controller</title>
     <link rel="stylesheet" href="/shared/theme.css">
-    <link rel="stylesheet" href="static/css/style.css">
+    <link rel="stylesheet" href="static/css/style.css?v=4">
     <link rel="manifest" href="static/site.webmanifest">
     <meta name="theme-color" content="#2B2E3B">
 <style>
@@ -127,18 +127,24 @@
         </header>
 
         <main>
-            <!-- Power Control -->
-            <section class="control-section">
+            <!-- Power + Geraete-Fakten (2026-08-15): der Platz UNTER dem
+                 Knopf war leer, weil die Karte im Grid auf die Hoehe der
+                 Farb-Karte gestreckt wurde. Jetzt traegt er die Fakten, die
+                 vorher eine eigene fette Karte belegten. -->
+            <section class="control-section" id="sec-power">
                 <h3>Stromversorgung</h3>
-                <div style="display: flex; justify-content: center; align-items: center; flex-direction: column;">
-                    <div class="power-button" id="power-btn">
+                <div class="power-row">
+                    <div class="power-button" id="power-btn" role="button" tabindex="0"
+                         aria-label="Power Ein/Aus">
                         <svg viewBox="0 0 24 24">
                             <path d="M12 3v10M5.25 8.25A7.5 7.5 0 1 0 18.75 8.25" stroke-linecap="round"></path>
                         </svg>
                     </div>
-                    <p style="text-align: center; color: var(--text-secondary); margin-top: var(--spacing-3);">
-                        Power Ein/Aus
-                    </p>
+                    <dl class="device-facts">
+                        <div><dt>LEDs</dt><dd id="led-count">--</dd></div>
+                        <div><dt>GPIO</dt><dd id="gpio-pin">--</dd></div>
+                        <div><dt>Effekt</dt><dd id="current-effect">--</dd></div>
+                    </dl>
                 </div>
             </section>
 
@@ -217,46 +223,25 @@
                 </div>
             </section>
 
-            <!-- Brightness Control -->
-            <section class="control-section">
-                <h3>Brightness</h3>
-                <div class="slider-container">
+            <!-- Helligkeit + Tempo: zwei Zeilen in EINER Karte — je ein
+                 Slider rechtfertigte keine eigene Karte. -->
+            <section class="control-section" id="sec-levels">
+                <h3>Helligkeit &amp; Tempo</h3>
+                <div class="level-row">
+                    <label for="brightness-slider">Helligkeit</label>
                     <input type="range" id="brightness-slider" min="0" max="255" value="100">
-                    <div class="slider-value" id="brightness-value">100</div>
+                    <output class="slider-value" id="brightness-value" for="brightness-slider">100</output>
                 </div>
-            </section>
-
-            <!-- Speed Control -->
-            <section class="control-section">
-                <h3>Speed / Intensity</h3>
-                <div class="slider-container">
+                <div class="level-row">
+                    <label for="speed-slider">Tempo</label>
                     <input type="range" id="speed-slider" min="1" max="100" value="50">
-                    <div class="slider-value" id="speed-value">50</div>
-                </div>
-            </section>
-
-            <!-- System Info -->
-            <section class="control-section">
-                <h3>System Information</h3>
-                <div class="system-info">
-                    <div class="info-item">
-                        <span class="info-label">LED Count:</span>
-                        <span class="info-value" id="led-count">--</span>
-                    </div>
-                    <div class="info-item">
-                        <span class="info-label">GPIO Pin:</span>
-                        <span class="info-value" id="gpio-pin">--</span>
-                    </div>
-                    <div class="info-item">
-                        <span class="info-label">Current Effect:</span>
-                        <span class="info-value" id="current-effect">--</span>
-                    </div>
+                    <output class="slider-value" id="speed-value" for="speed-slider">50</output>
                 </div>
             </section>
         </main>
     </div>
 
-    <script src="static/js/app.js"></script>
+    <script src="static/js/app.js?v=2"></script>
 <script>/* cursor-sheen (gated, rAF-throttled, additiv) */
 (function(){try{
   if(!matchMedia('(hover:hover) and (pointer:fine)').matches) return;

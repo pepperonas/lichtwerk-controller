@@ -669,3 +669,129 @@ header,.header,h1{animation:md-drop .55s var(--ease-emph,cubic-bezier(.2,0,0,1))
 .control-section:hover{transform:translateY(-3px)}
 .color-preset:hover{transform:scale(1.28) rotate(-8deg)}
 @media(prefers-reduced-motion:reduce){*{animation:none!important}}
+
+/* ═══ Layout-Optimierung Desktop (2026-08-15) ══════════════════════════════
+   Befund: (a) `main` ist ein Grid — Karten STRECKEN sich per Default auf die
+   Zeilenhoehe, deshalb war die Power-Karte so hoch wie die Farb-Karte und
+   darunter ~300 px leer; (b) auf Desktop war schlicht alles zu gross
+   (140-px-Effekt-Pillen, 48-px-Farbkreise, 120-px-Power-Knopf, 80-px-
+   Farbvorschau). Gefixt wird beides an der Wurzel: align-items:start plus
+   eine desktop-gescopte Verdichtung. Mobil bleibt grossflaechig bedienbar. */
+
+main { align-items: start; }
+
+/* Power-Karte: Knopf + Geraete-Fakten nebeneinander statt Knopf + Leere */
+.power-row { display: flex; align-items: center; gap: var(--spacing-5); }
+.power-row .power-button { margin: 0; flex: 0 0 auto; }
+.device-facts { display: grid; gap: var(--spacing-2); margin: 0; min-width: 0; flex: 1; }
+.device-facts > div {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: var(--spacing-3); padding: var(--spacing-2) var(--spacing-3);
+    background: var(--background-darker); border-radius: var(--radius);
+}
+.device-facts dt {
+    font-size: .72rem; font-weight: 700; letter-spacing: .06em;
+    text-transform: uppercase; color: var(--text-secondary);
+}
+.device-facts dd {
+    margin: 0; font-weight: 700; font-variant-numeric: tabular-nums;
+    color: var(--accent-blue); overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Helligkeit & Tempo: zwei beschriftete Zeilen in einer Karte */
+.level-row {
+    display: grid; grid-template-columns: 5.5rem 1fr auto;
+    align-items: center; gap: var(--spacing-3);
+    padding: var(--spacing-2) var(--spacing-3);
+    background: var(--background-darker); border-radius: var(--radius-lg);
+}
+.level-row + .level-row { margin-top: var(--spacing-3); }
+.level-row label { font-size: .85rem; font-weight: 600; color: var(--text-secondary); }
+.level-row input[type="range"] { width: 100%; }
+
+/* Ab Tablet verdichten — die Touch-Groessen bleiben mobil unangetastet */
+@media (min-width: 768px) {
+    .control-section { padding: var(--spacing-4) var(--spacing-5); }
+    .control-section h3 { font-size: 1rem; margin-bottom: var(--spacing-3); }
+    .power-button { width: 72px; height: 72px; border-width: 2px; }
+    .power-button svg { width: 34px; height: 34px; }
+    .color-display { height: 44px; margin-bottom: var(--spacing-3); }
+    .predefined-colors {
+        grid-template-columns: repeat(auto-fit, minmax(34px, 1fr));
+        gap: var(--spacing-2); padding: var(--spacing-3);
+        margin-top: var(--spacing-3);
+    }
+    .color-preset { width: 34px; height: 34px; border-width: 1px; }
+    .effects-grid {
+        grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+        gap: var(--spacing-2);
+    }
+    .effect-btn {
+        padding: var(--spacing-2) var(--spacing-3);
+        font-size: .85rem; border-width: 1px;
+    }
+}
+
+/* Desktop: Power + Regler stapeln links, die hohe Farb-Karte steht rechts */
+@media (min-width: 1200px) {
+    main {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+        grid-template-areas:
+            "power   color"
+            "levels  color"
+            "effects effects";
+        gap: var(--spacing-4);
+    }
+    .control-section:nth-child(1) { grid-area: power; }
+    .control-section:nth-child(2) { grid-area: color; }
+    .control-section:nth-child(3) { grid-area: effects; }
+    .control-section:nth-child(4) { grid-area: levels; }
+}
+
+/* Tablet: dieselbe Aufteilung, nur enger */
+@media (min-width: 768px) and (max-width: 1199px) {
+    main {
+        grid-template-columns: 1fr 1fr;
+        grid-template-areas:
+            "power   color"
+            "levels  color"
+            "effects effects";
+    }
+    .control-section:nth-child(1) { grid-area: power; }
+    .control-section:nth-child(2) { grid-area: color; }
+    .control-section:nth-child(3) { grid-area: effects; }
+    .control-section:nth-child(4) { grid-area: levels; }
+}
+
+/* Mobil: eine Spalte, Fakten unter den Knopf, alles gross genug zum Tippen */
+@media (max-width: 767px) {
+    main { grid-template-columns: 1fr; grid-template-areas: none; }
+    .control-section:nth-child(n) { grid-area: auto; }
+    .power-row { flex-direction: column; align-items: stretch; gap: var(--spacing-4); }
+    .power-row .power-button { align-self: center; }
+    .level-row { grid-template-columns: 4.5rem 1fr auto; }
+}
+
+/* Mobil-Korrekturen zum Layout-Pass (2026-08-15) */
+@media (max-width: 767px) {
+    /* ⚠️ Farbfelder waren FIX 40 px breit in `repeat(6, 1fr)`-Spalten — in
+       einer 266-px-Karte ergab das 316 px Inhalt, die Felder liefen rechts
+       aus der Karte. Jetzt fuellen sie ihre Spalte und koennen per
+       Konstruktion nicht mehr ueberlaufen. */
+    .predefined-colors { grid-template-columns: repeat(auto-fit, minmax(38px, 1fr)); }
+    .color-preset { width: auto; height: auto; aspect-ratio: 1; min-width: 0; }
+
+    /* RGB: eine Zeile (Label | Slider | Zahl) statt drei Stockwerke —
+       spart je Kanal ~50 px Hoehe. */
+    .color-input-group {
+        display: grid; grid-template-columns: 3.2rem minmax(0, 1fr) 3.4rem;
+        align-items: center; gap: var(--spacing-2);
+    }
+    .color-input-group label { text-align: left; min-width: 0; }
+    .color-input-group input[type="range"] { min-width: 0; width: 100%; }
+    .color-input-group input[type="number"] {
+        width: 100%; min-width: 0; padding-left: 4px; padding-right: 4px;
+        text-align: center; font-variant-numeric: tabular-nums;
+    }
+}
