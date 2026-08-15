@@ -101,3 +101,37 @@ def test_power_button_is_keyboard_operable():
 def test_shared_nav_and_icons_are_embedded_with_a_version():
     assert re.search(r'nav\.js\?v=\d+', HTML)
     assert re.search(r'icons\.js\?v=\d+', HTML)
+
+
+# --- Abstand Kopf -> Inhalt (Haus-Norm 16 px, Audit 2026-08-15) -------------
+
+def _header_rule():
+    m = re.search(r"\nheader\s*\{[^}]*\}", CSS)
+    assert m, "header-Regel nicht gefunden"
+    return m.group(0)
+
+
+def test_header_sets_no_spacing_of_its_own():
+    """⚠️ `.container` ist ein GRID mit `gap`, und ein Gap ADDIERT sich zu den
+    Raendern der Kinder. Mit eigenem Unterpolster ODER Unterrand am Kopf waren
+    es 32 statt der gemessenen Haus-Norm von 16 px. Den Abstand setzt allein
+    das Gap — beide Wege am Kopf muessen zu bleiben."""
+    regel = _header_rule()
+    assert not re.search(r"padding:\s*0\s+0\s+var\(--sh-gap-lg\)", regel), \
+        "der Kopf bringt wieder ein Unterpolster mit"
+    assert not re.search(r"margin-bottom:\s*var\(--sh-gap-lg\)", regel), \
+        "der Kopf bringt wieder einen Unterrand mit"
+
+
+def test_container_gap_carries_the_spacing():
+    m = re.search(r"\.container\s*\{[^}]*\}", CSS)
+    assert m, ".container-Regel nicht gefunden"
+    assert "display: grid" in m.group(0)
+    assert re.search(r"gap:\s*var\(--sh-gap-lg\)", m.group(0)), \
+        "ohne Gap gaebe es gar keinen Abstand mehr"
+
+
+def test_cards_do_not_stretch_to_the_row_height():
+    """Ohne `align-items:start` waren die Karten so hoch wie die hoechste der
+    Zeile — unter dem Power-Knopf standen dadurch ~300 px Nichts."""
+    assert re.search(r"main\s*\{\s*align-items:\s*start", CSS)
