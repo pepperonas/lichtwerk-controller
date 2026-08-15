@@ -74,7 +74,11 @@ header {
     /* Der Kopf ist Teil der Seite, keine Karte: ohne Flaeche, ohne Rundung,
        ohne eigenes Oberpolster (die 20 px zum Leistenrand kommen vom body).
        Als Karte stand er als einziger im Stack in einem eigenen Kasten. */
-    padding: 0 0 var(--sh-gap-lg);
+    /* Weder Unterpolster noch Unterrand: `.container` ist ein GRID mit
+       `gap: var(--sh-gap-lg)`, und ein Gap addiert sich zu Raendern der
+       Kinder. Mit beidem waren es 32 statt der Haus-Norm 16
+       (Abstands-Audit 2026-08-15). Den Abstand setzt allein das Gap. */
+    padding: 0;
     background: transparent;
     border-radius: 0;
     box-shadow: var(--shadow);
