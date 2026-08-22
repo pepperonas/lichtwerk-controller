@@ -346,3 +346,72 @@ def test_warn_bass_endpoint_sets_level():
     assert wc.controller._iris_bass_in == 1.0            # geklemmt
     client.post('/api/warn_bass', json={"level": "kaputt"})
     assert wc.controller._iris_bass_in == 0.0            # failsafe
+
+
+# ── Einstellbare Grundfarbe (2026-08-23) ────────────────────────────────
+
+def test_hue_delta_auf_sich_selbst_ist_null():
+    """Wer die Grundfarbe auf den Auslieferungswert setzt, dreht nicht."""
+    rot = (255, 70, 55)
+    assert ro.hue_delta(rot, rot) == 0.0
+
+
+def test_ohne_drehung_ist_die_rampe_bitgleich():
+    """⚠️ Der Rueckweg muss exakt sein: hue_deg=0 laeuft durch den ALTEN Pfad
+    inklusive der roten Kappen. Ein „fast gleich" waere hier schon ein
+    veraendertes Auslieferungsbild."""
+    alt = ro.build_gradient(32, 140, 90, 0.0)
+    neu = ro.build_gradient(32, 140, 90, 0.0, 0.0)
+    assert alt == neu
+
+
+def test_drehung_verschiebt_den_farbton_und_haelt_die_helligkeit():
+    ohne = ro.build_gradient(32, 140, 90, 0.0)
+    mit = ro.build_gradient(32, 140, 90, 0.0, 120.0)
+    assert ohne != mit
+    # Helligkeit der Rampe bleibt monoton steigend wie vorher
+    hell = [ro.srgb_to_oklab(c)[0] for c in mit]
+    assert hell == sorted(hell)
+
+
+def test_gedrehte_rampe_laeuft_NIE_ins_Weisse():
+    """Die Nie-Weiss-Doktrin traegt bei Drehung die Drehung selbst: sie
+    erhaelt die Buntheit, und Weiss ist unbunt. Ohne diese Eigenschaft
+    waere die Farbwahl ein Weg, den Weiss-Kontrast zu zerstoeren."""
+    for winkel in (30.0, 90.0, 150.0, 210.0, 300.0):
+        for r, g, b in ro.build_gradient(32, 140, 90, 0.0, winkel):
+            if max(r, g, b) < 40:
+                continue                      # Glut-Abgrund ist dunkel, nicht weiss
+            assert max(r, g, b) - min(r, g, b) >= 30, (winkel, (r, g, b))
+
+
+def test_drehung_um_360_grad_landet_wieder_am_ausgangspunkt():
+    a = ro.build_gradient(32, 140, 90, 0.0, 0.001)
+    b = ro.build_gradient(32, 140, 90, 0.0, 360.001)
+    for (r1, g1, b1), (r2, g2, b2) in zip(a, b):
+        assert abs(r1 - r2) <= 1 and abs(g1 - g2) <= 1 and abs(b1 - b2) <= 1
+
+
+# ── Drehwinkel aus der Farbwahl (2026-08-23) ────────────────────────────
+
+def test_auslieferungsrot_dreht_nicht():
+    """⚠️ Der wichtigste Fall: solange die Grundfarbe der Auslieferungswert
+    ist, MUSS der Winkel exakt 0 sein — sonst laeuft das Bestandsbild
+    unbemerkt durch den Dreh-Pfad und die roten Kappen fallen weg."""
+    wc.apply_iris_config({})
+    assert wc.iris_hue_deg() == 0.0
+
+
+def test_eine_andere_grundfarbe_dreht():
+    wc.apply_iris_config({'red_r': 60, 'red_g': 120, 'red_b': 255})
+    assert wc.iris_hue_deg() != 0.0
+    wc.apply_iris_config({})
+
+
+def test_unbunte_grundfarbe_dreht_nicht():
+    """Grau hat keine Farbrichtung — jeder Winkel waere geraten. Und eine
+    Drehung auf Grau waere genau der Weg ins Weisse, den es nicht geben darf."""
+    for grau in ((128, 128, 128), (255, 255, 255), (10, 10, 12)):
+        wc.apply_iris_config({'red_r': grau[0], 'red_g': grau[1], 'red_b': grau[2]})
+        assert wc.iris_hue_deg() == 0.0
+    wc.apply_iris_config({})

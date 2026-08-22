@@ -74,17 +74,52 @@ def _sample_anchors(t):
     return pts[-1][1]
 
 
-def build_gradient(steps, g_max, b_max, drift=0.0):
+def oklab_hue(rgb):
+    """Farbwinkel des Farborts in Oklab (Radiant)."""
+    _, a, b = srgb_to_oklab(rgb)
+    return math.atan2(b, a)
+
+
+def hue_delta(basis_rgb, ziel_rgb):
+    """Drehwinkel, der `basis` in die Farbrichtung von `ziel` bringt.
+
+    Nur die RICHTUNG zaehlt: Helligkeit und Buntheit der Rampe bleiben, wie
+    sie sind. Wer als Ziel die Grundfarbe selbst angibt, bekommt 0 — und
+    damit die unveraenderte Rampe.
+    """
+    return oklab_hue(ziel_rgb) - oklab_hue(basis_rgb)
+
+
+def _rotiere(a, b, theta):
+    ca, sa = math.cos(theta), math.sin(theta)
+    return a * ca - b * sa, a * sa + b * ca
+
+
+def build_gradient(steps, g_max, b_max, drift=0.0, hue_deg=0.0):
     """steps Eintraege (r,g,b) 0..255. `drift` verschiebt NUR den Farbort
     (Chroma-Abtastpunkt), nicht die Helligkeitsrampe — der minutenlange
     Hue-Drift aendert die Stimmung, nie die Dynamik. Kappen erzwingen die
     Nie-Weiss-Doktrin hart: G/B gedeckelt, R bleibt dominant.
+
+    `hue_deg` dreht die GANZE Rampe im Oklab-Farbkreis (Nutzerwunsch
+    2026-08-23: „die rote Grundfarbe moechte ich aendern"). ⚠️ Bei einer
+    Drehung greifen die roten Kappen NICHT mehr — sie sind auf „R dominant"
+    gebaut und wuerden ein gedrehtes Gruen oder Blau zu Matsch klemmen. Die
+    Nie-Weiss-Doktrin traegt dort die Drehung SELBST: sie erhaelt Helligkeit
+    UND Buntheit des Farborts, verschiebt nur die Richtung — was bunt war,
+    bleibt bunt, und Weiss ist unbunt. `hue_deg == 0` laeuft unveraendert
+    durch den alten Pfad (Bit-Identitaet, per Test gepinnt).
     """
+    theta = math.radians(hue_deg)
     out = []
     for i in range(steps):
         t = i / (steps - 1.0)
         big_l = _sample_anchors(t)[0]
         _, a, b2 = _sample_anchors(max(0.0, min(1.0, t + drift)))
+        if theta:
+            a, b2 = _rotiere(a, b2, theta)
+            out.append(oklab_to_srgb((big_l, a, b2)))
+            continue
         r, g, b = oklab_to_srgb((big_l, a, b2))
         g = min(g, int(g_max))
         b = min(b, int(b_max))

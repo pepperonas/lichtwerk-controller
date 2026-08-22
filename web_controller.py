@@ -38,6 +38,28 @@ def apply_iris_config(section):
     IRIS = iris_config.load(section)
 
 
+# Farbort des Auslieferungs-Rots — der Bezug, gegen den gedreht wird.
+IRIS_ROT_BASIS = (iris_config.DEFAULTS['red_r'],
+                  iris_config.DEFAULTS['red_g'],
+                  iris_config.DEFAULTS['red_b'])
+
+
+def iris_hue_deg():
+    """Drehwinkel der Rot-Rampe aus der eingestellten Grundfarbe (Grad).
+
+    Steht die Grundfarbe auf dem Auslieferungswert, ist das exakt 0 — und
+    die Rampe laeuft unveraendert durch den alten Pfad. Eine unbunte
+    Grundfarbe (Grau/Weiss/Schwarz) hat keine Richtung; dort waere jeder
+    Winkel Willkuer, also bleibt es ebenfalls bei 0.
+    """
+    ziel = (IRIS['red_r'], IRIS['red_g'], IRIS['red_b'])
+    if ziel == IRIS_ROT_BASIS:
+        return 0.0
+    if max(ziel) - min(ziel) < 8:        # praktisch unbunt
+        return 0.0
+    return math.degrees(red_organic.hue_delta(IRIS_ROT_BASIS, ziel))
+
+
 def iris_glow_factor(x, t):
     """Raeumliche Glut-Modulation des Rots (Nutzerwunsch 2026-08-11).
 
@@ -1261,11 +1283,15 @@ class LichtwerkWebController:
             period = round(max(120.0, min(480.0,
                                           240.0 * self._tempo_state['f'])) / 10.0) * 10.0
         drift = amp * math.sin(2.0 * math.pi * t / period)
-        key = round(drift * 124.0)        # 1/124 ~ Viertel einer Rampenstufe
+        key = (round(drift * 124.0),
+               IRIS['red_r'], IRIS['red_g'], IRIS['red_b'])
+        # ⚠️ Die Grundfarbe MUSS in den Cache-Schluessel: sonst bleibt nach
+        # einem Farbwechsel die alte Rampe stehen, bis der Drift zufaellig
+        # eine andere Stufe erreicht.
         if ep.get('iris_grad') is None or ep.get('iris_grad_key') != key:
             ep['iris_grad'] = red_organic.build_gradient(
                 32, IRIS['organic_g_max'], IRIS['organic_b_max'],
-                key / 124.0)
+                key[0] / 124.0, iris_hue_deg())
             ep['iris_grad_key'] = key
         return ep['iris_grad']
 
@@ -1809,8 +1835,9 @@ class LichtwerkWebController:
             # u == 0 right now → rising edge ON the beat.
             self.effect_params['iris_ph'] = (t - 0.21) % iris_period
 
-        # CSS peak rgba(255,70,55) — full punch, flat strip (no radial soft)
-        hr, hg, hb = 255, 70, 55
+        # Grundfarbe des Teppichs — Default 255,70,55 (CSS-Peak rgba(255,70,55),
+        # full punch, flat strip). Seit 2026-08-23 einstellbar.
+        hr, hg, hb = IRIS['red_r'], IRIS['red_g'], IRIS['red_b']
 
         # ── Blinder-Scheduler: Vollflaechen-Weiss als Fensterplan ──
         # Volles Warmweiss bei 600 LEDs waeren ~33 A — jeder Blinder faehrt
@@ -2680,6 +2707,71 @@ def iris_profile():
               f"timing={IRIS.get('red_timing')}", flush=True)
     return jsonify({'profile': IRIS.get('red_profile', 'classic'),
                     'timing': IRIS.get('red_timing', 'fixed')})
+
+
+@app.route('/api/iris/colors', methods=['GET', 'POST'])
+def iris_colors():
+    """Grundfarben von Rot und Weiss — live + persistent (2026-08-23).
+
+    POST {"red": [r,g,b]} und/oder {"white": [r,g,b]}; jeweils 0..255.
+    Weiss faerbt die Funken/Meteore direkt (sparkle_r/g/b), Rot dreht den
+    Teppich im Oklab-Farbkreis (s. iris_hue_deg). "reset": true setzt beide
+    auf den Auslieferungsstand zurueck — Rot bleibt Rot, Weiss bleibt Weiss.
+    """
+    def lies(name):
+        v = (request.get_json() or {}).get(name)
+        if v is None:
+            return None
+        if isinstance(v, str):                 # "#ff8800" aus der Oberflaeche
+            h = v.strip().lstrip('#')
+            if len(h) != 6:
+                raise ValueError(f'{name}: #rrggbb erwartet')
+            v = [int(h[i:i + 2], 16) for i in (0, 2, 4)]
+        if not isinstance(v, (list, tuple)) or len(v) != 3:
+            raise ValueError(f'{name}: [r,g,b] oder "#rrggbb" erwartet')
+        return [max(0, min(255, int(round(float(c))))) for c in v]
+
+    if request.method == 'POST':
+        data = request.get_json() or {}
+        try:
+            rot, weiss = lies('red'), lies('white')
+        except (ValueError, TypeError) as e:
+            return jsonify({'error': str(e)}), 400
+        sec = dict(controller.config.get('iris') or {})
+        if data.get('reset'):
+            for k in ('red_r', 'red_g', 'red_b', 'sparkle_r', 'sparkle_g', 'sparkle_b'):
+                sec.pop(k, None)
+        if rot:
+            sec['red_r'], sec['red_g'], sec['red_b'] = rot
+        if weiss:
+            sec['sparkle_r'], sec['sparkle_g'], sec['sparkle_b'] = weiss
+        if not (rot or weiss or data.get('reset')):
+            return jsonify({'error': 'red, white oder reset angeben'}), 400
+        controller.config['iris'] = sec
+        apply_iris_config(sec)
+        try:
+            tmp = controller.config_file + '.tmp'
+            with open(tmp, 'w') as f:
+                json.dump(controller.config, f, indent=2)
+            os.replace(tmp, controller.config_file)
+        except OSError as e:
+            print(f"iris_colors: config.json nicht geschrieben: {e}")
+        # ⚠️ Der Rot-Gradient ist gecacht; der Cache-Schluessel traegt die
+        # Grundfarbe, ein wake reicht also zum Neuzeichnen.
+        controller.wake_effect()
+        print(f"iris-farben: rot={rot or 'unveraendert'} weiss={weiss or 'unveraendert'} "
+              f"drehung={iris_hue_deg():.1f}°", flush=True)
+    return jsonify({
+        'red': [IRIS['red_r'], IRIS['red_g'], IRIS['red_b']],
+        'white': [IRIS['sparkle_r'], IRIS['sparkle_g'], IRIS['sparkle_b']],
+        'hue_deg': round(iris_hue_deg(), 2),
+        'defaults': {
+            'red': list(IRIS_ROT_BASIS),
+            'white': [iris_config.DEFAULTS['sparkle_r'],
+                      iris_config.DEFAULTS['sparkle_g'],
+                      iris_config.DEFAULTS['sparkle_b']],
+        },
+    })
 
 
 @app.route('/api/warn_mode', methods=['POST'])

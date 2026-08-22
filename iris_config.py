@@ -90,6 +90,7 @@ RANGES = {
     # Sparkle-Blinder (Weiss-Events)
     "blinder_gain": (0.1, 1.0),
     "sparkle_r": (0, 255), "sparkle_g": (0, 255), "sparkle_b": (0, 255),
+    "red_r": (0, 255), "red_g": (0, 255), "red_b": (0, 255),
     "sparkle_decay": (0.10, 0.80),
     "double_pulse": (0.05, 0.30),
     "double_gain2": (0.3, 1.0),
@@ -308,6 +309,12 @@ DEFAULTS = {
     # Sparkle-Blinder (Weiss = Interpunktion)
     "blinder_gain": 1.0,
     "sparkle_r": 255, "sparkle_g": 205, "sparkle_b": 150,
+
+    # Grundfarbe des roten Teppichs (Nutzerwunsch 2026-08-23). Default ist
+    # EXAKT das klassische Rot — daraus ergibt sich Drehwinkel 0 und damit
+    # bitgleich das bisherige Bild. Gedreht wird in Oklab (Helligkeit und
+    # Buntheit bleiben), nicht per Kanal-Skalierung.
+    "red_r": 255, "red_g": 70, "red_b": 55,
     "sparkle_decay": 0.28,
     "double_pulse": 0.10,
     "double_gain2": 0.85,

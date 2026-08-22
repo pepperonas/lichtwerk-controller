@@ -52,3 +52,11 @@ def test_every_range_key_has_a_default_and_vice_versa():
 def test_bool_switches_load_without_ranges():
     assert iris_config.load({"engage_variety": False})["engage_variety"] is False
     assert iris_config.load({})["engage_variety"] is True
+
+
+# ── Grundfarbe Rot (2026-08-23) ─────────────────────────────────────────
+
+def test_grundfarben_sind_geklemmt_und_ueberleben_muell():
+    cfg = iris_config.load({'red_r': 999, 'red_g': -5, 'red_b': 'blau'})
+    assert cfg['red_r'] == 255 and cfg['red_g'] == 0
+    assert cfg['red_b'] == iris_config.DEFAULTS['red_b']
