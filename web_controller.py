@@ -1217,7 +1217,7 @@ class LichtwerkWebController:
             w = max(0.025, min(0.12, w * self._tempo_state['f']))
         return w
 
-    def _organic_kick(self, t, ks, vel=None, bass=None):
+    def _organic_kick(self, t, ks, vel=None, bass=None, tone=None):
         """Kick -> gestapelter ADSR-Puls. vel = Perzentil-Rang von disco
         (M2); fehlt er (alter Client), traegt die rohe Staerke. Velocity
         skaliert Peak (power curve), Decay-Dauer und Ausbreitungstempo.
@@ -1249,7 +1249,11 @@ class LichtwerkWebController:
         dscale = 0.7 + 0.9 * v                # Gewicht klingt laenger aus
         # Harter Schlag breitet sich schneller aus (1.35-0.7v: 0.65x..1.35x)
         spread_ms = max(60.0, min(600.0, IRIS['organic_spread_ms'] * f))
-        t_spread = max(0.05, spread_ms / 1000.0 * (1.35 - 0.7 * v))
+        # Club-Klangfarbe (2026-08-24): tiefe Kicks bluehen breiter, knackige
+        # enger. tone None -> neutral (0.5) -> Faktor 1.0 (Alt-Verhalten).
+        tone_v = 0.5 if tone is None else max(0.0, min(1.0, float(tone)))
+        t_spread = max(0.05, spread_ms / 1000.0 * (1.35 - 0.7 * v)
+                       / red_organic.club_tone_spread(tone_v, IRIS['club_tone']))
         pulses = ep.setdefault('iris_red_pulses', [])
         # Club-Puls: der Kick-Zaehler treibt Chase-Seite + Phrasen-Kipp;
         # der Zeitstempel den Sidechain-Duck des Betts.
@@ -1276,6 +1280,7 @@ class LichtwerkWebController:
                                   * f * stretch)) * dscale,
             'tail': max(0.100, min(0.900, IRIS['organic_tail_ms'] / 1000.0
                                    * f * stretch)),
+            'tone': tone_v,
         }
         pulses.append(basis)
         # Harter Schlag (Scanner): Spiegel-Puls vom anderen Ende, etwas
@@ -1390,7 +1395,8 @@ class LichtwerkWebController:
                 p.get('dec', dec_d * p['dscale']), sus,
                 p.get('tail', tail_d))
             if e_p > 0.004:
-                live.append((e_p, p['origin'], age * p['spread_v']))
+                live.append((e_p, p['origin'], age * p['spread_v'],
+                             p.get('tone', 0.5)))
 
         grad = self._organic_gradient(t)
         agrad = self._accent_gradient(t)
@@ -1435,11 +1441,15 @@ class LichtwerkWebController:
         _press = red_organic.bass_press
         _knee = red_organic.soft_knee
         _h01 = red_organic.hash01
+        club_tone_amt = IRIS['club_tone']
         for b in range(nb):
             x = b * 4 + 1.5
             acc = 0.0
-            for e_p, org, reach in live:
-                acc += e_p * _cover(abs(x - org), reach, edge)
+            tw = 0.0                          # tone-gewichtete Kick-Energie
+            for e_p, org, reach, tn in live:
+                c = e_p * _cover(abs(x - org), reach, edge)
+                acc += c
+                tw += c * tn
             press = _press(x * inv_n, env, gain_b)
             puls = _knee(acc, knee)
             v = 1.0 - (1.0 - bed_eff) * (1.0 - puls) * (1.0 - press)
@@ -1469,6 +1479,10 @@ class LichtwerkWebController:
             # 0.85 laesst den Grundton durchscheinen (Glut, kein Umschalter).
             if agrad is not None and puls > 0.02:
                 m = min(1.0, puls * 1.15) * 0.85
+                # Club-Klangfarbe: knackige Kicks (viel treble) ziehen
+                # STAERKER zur warmen Akzentfarbe, tiefe bleiben in der Glut.
+                if club_tone_amt > 0.0 and acc > 1e-6:
+                    m = min(1.0, m * red_organic.club_tone_mix(tw / acc, club_tone_amt))
                 a0 = agrad[i0]
                 a1 = agrad[i0 + 1] if i0 < 31 else a0
                 rf += ((a0[0] + (a1[0] - a0[0]) * fr) - rf) * m
@@ -1635,11 +1649,12 @@ class LichtwerkWebController:
                 item = q.pop(0)
             except IndexError:
                 break
-            kb = kvel = kbass = None
+            kb = kvel = kbass = ktone = None
             if isinstance(item, dict):
                 kb = item.get('bpm')
                 kvel = item.get('vel')    # Perzentil-Velocity (nur Rot, M2)
                 kbass = item.get('bass')  # Bassline-Snapshot (nur Rot, M1)
+                ktone = item.get('tone')  # Klangfarbe: treble-Anteil (Club)
                 item = item.get('s')
             try:
                 ks = max(0.0, min(1.0, float(item)))
@@ -1713,7 +1728,7 @@ class LichtwerkWebController:
             if IRIS.get('red_profile') == 'organic':
                 if self._tempo_state is not None:
                     self._tempo.note_kick(IRIS, t0 + t, kb, ks)
-                self._organic_kick(t, ks, kvel, kbass)
+                self._organic_kick(t, ks, kvel, kbass, ktone)
 
         # ── Weiss-Event-Intake (2026-08-09): double/roll/accent von disco ──
         # Weiss ist Interpunktion: der Vollflaechen-Blinder feuert nur noch
@@ -2685,10 +2700,21 @@ def warn_kick_evt():
             bpm = b
     except (TypeError, ValueError):
         pass
+
+    def _opt(key):
+        v = data.get(key)
+        if v is None:
+            return None
+        try:
+            return max(0.0, min(1.0, float(v)))
+        except (TypeError, ValueError):
+            return None
+
     if controller.current_effect == 'iris_warn':
         q = controller.effect_params.setdefault('iris_kicks', [])
         if len(q) < 8:
-            q.append({'s': strength, 'bpm': bpm})
+            q.append({'s': strength, 'bpm': bpm, 'vel': _opt('vel'),
+                      'bass': _opt('bass'), 'tone': _opt('tone')})
         controller.wake_effect()
     return jsonify({'status': 'ok'})
 

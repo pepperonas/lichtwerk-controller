@@ -93,7 +93,8 @@ RANGES = {
     "red_r": (0, 255), "red_g": (0, 255), "red_b": (0, 255),
     "club_accent_deg": (0.0, 80.0), "club_chase": (0.0, 1.0),
     "club_phrase": (4, 64), "club_duck": (0.0, 0.6),
-    "club_duck_ms": (80, 800), "club_noise": (0.0, 0.3),
+    "club_duck_ms": (80, 800), "club_tone": (0.0, 1.0),
+    "club_noise": (0.0, 0.3),
     "club_noise_hz": (0.2, 6.0),
     "sparkle_decay": (0.10, 0.80),
     "double_pulse": (0.05, 0.30),
@@ -328,6 +329,8 @@ DEFAULTS = {
     "club_phrase": 16,         # Kicks je Phrase (Akzent-Kipp + Wellen-Flip)
     "club_duck": 0.22,         # Sidechain-Tiefe des Betts je Kick
     "club_duck_ms": 240,       # Erhol-Dauer (x Tempo-Faktor)
+    "club_tone": 0.6,          # Klangfarbe je Kick -> Breite + Akzent-Mix
+                               # (tief=breit/glut, knackig=eng/warm); 0 = aus
     "club_noise": 0.10,        # Noise-Glut-Amplitude auf der Wellen-Tabelle
     "club_noise_hz": 1.6,      # Zeitfrequenz des Rauschens
     "sparkle_decay": 0.28,

@@ -487,3 +487,39 @@ def test_club_spiegel_nur_fuer_harte_schlaege():
     assert not ro.club_double(0.5)
     assert not ro.club_double(0.79)
     assert ro.club_double(0.8) and ro.club_double(1.0)
+
+
+# ── Klangfarbe je Kick (Frequenz-zu-Farbe, 2026-08-24) ───────────────────
+
+def test_club_tone_ist_der_treble_anteil():
+    """0 = reiner Sub, 1 = reine Hoehen, 0.5 = neutral (auch bei Stille —
+    unbestimmte Farbe darf nichts verschieben)."""
+    assert ro.club_tone(1.0, 0.0) == 0.0
+    assert ro.club_tone(0.0, 1.0) == 1.0
+    assert abs(ro.club_tone(0.5, 0.5) - 0.5) < 1e-9
+    assert ro.club_tone(0.0, 0.0) == 0.5          # Stille -> neutral
+    assert ro.club_tone(None, None) == 0.5
+
+
+def test_club_tone_neutral_und_amt0_sind_exakt_1():
+    """⚠️ Rollback: kein Ton-Feed (neutral) ODER Regler 0 = Alt-Verhalten."""
+    assert ro.club_tone_spread(0.5, 0.6) == 1.0
+    assert ro.club_tone_spread(0.2, 0.0) == 1.0
+    assert ro.club_tone_mix(0.5, 0.6) == 1.0
+    assert ro.club_tone_mix(0.9, 0.0) == 1.0
+
+
+def test_tiefe_kicks_bluehen_breiter_knackige_enger():
+    tief = ro.club_tone_spread(0.0, 0.6)
+    hell = ro.club_tone_spread(1.0, 0.6)
+    assert tief > 1.0 > hell
+    # geklemmt, monoton
+    assert 0.6 <= hell < 1.0 < tief <= 1.6
+    assert ro.club_tone_spread(0.25, 0.6) > ro.club_tone_spread(0.75, 0.6)
+
+
+def test_knackige_kicks_ziehen_staerker_zur_akzentfarbe():
+    tief = ro.club_tone_mix(0.0, 0.6)
+    hell = ro.club_tone_mix(1.0, 0.6)
+    assert hell > 1.0 > tief
+    assert 0.4 <= tief < 1.0 < hell <= 1.6

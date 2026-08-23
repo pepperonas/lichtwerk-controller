@@ -169,6 +169,38 @@ def club_origin(kick_count, chase, gauss01, jitter01):
     return max(0.05, min(0.95, pos))
 
 
+def club_tone(bass01, high01):
+    """Klangfarbe eines Kicks: 0 = reiner Sub-Boom, 1 = knackige Hoehen,
+    0.5 = neutral (auch wenn beide Baender leer sind — dann ist die Farbe
+    unbestimmt und darf nichts verschieben). Der Frequenz-zu-Farbe-Hebel
+    aus der Forschung: WELCHES Instrument schlaegt, nicht nur wie hart."""
+    b = max(0.0, float(bass01 or 0.0))
+    h = max(0.0, float(high01 or 0.0))
+    s = b + h
+    if s < 1e-6:
+        return 0.5
+    return h / s
+
+
+def club_tone_spread(tone, amount):
+    """Ausbreitungs-Faktor aus der Klangfarbe: tiefe Kicks bluehen BREITER
+    (Boom fuellt den Streifen), knackige enger (Snap ist punktuell). amount 0
+    ODER tone neutral (0.5) = exakt 1.0 (Alt-Verhalten). Geklemmt 0.6..1.6."""
+    if amount <= 0.0:
+        return 1.0
+    # tone 0 -> +amount (breiter), tone 1 -> -amount (enger)
+    return max(0.6, min(1.6, 1.0 + (0.5 - max(0.0, min(1.0, tone))) * 2.0 * amount))
+
+
+def club_tone_mix(tone, amount):
+    """Zusatz-Faktor auf den Akzent-Mix: knackige Kicks ziehen STAERKER zur
+    warmen Akzentfarbe (Hi-Hat-Glanz), tiefe bleiben in der Grundglut.
+    Zentriert um 1.0 bei neutralem Ton; amount 0 = exakt 1.0."""
+    if amount <= 0.0:
+        return 1.0
+    return max(0.4, min(1.6, 1.0 + (max(0.0, min(1.0, tone)) - 0.5) * 2.0 * amount))
+
+
 def club_double(vel, thr=0.8):
     """Harter Schlag: Puls feuert GESPIEGELT von beiden Enden (Scanner)."""
     return vel >= thr
