@@ -415,3 +415,75 @@ def test_unbunte_grundfarbe_dreht_nicht():
         wc.apply_iris_config({'red_r': grau[0], 'red_g': grau[1], 'red_b': grau[2]})
         assert wc.iris_hue_deg() == 0.0
     wc.apply_iris_config({})
+
+
+# ── Club-Puls (2026-08-23, „Club vibes") ─────────────────────────────────
+
+def test_club_alles_auf_null_ist_exakt_das_alt_verhalten():
+    """⚠️ Der Rollback-Pfad: jeder Club-Regler auf 0 muss die Alt-Semantik
+    ergeben — Identitaets-Gewinne, alter Ursprung, kein Zweiklang."""
+    assert ro.club_accent_delta(37, 16, 0.0) == 0.0
+    assert ro.club_duck_gain(0.0, 0.0, 0.24) == 1.0
+    assert ro.club_duck_gain(0.1, 0.3, 0.0) == 1.0
+    assert ro.club_noise_at([0.9] * 4, [0.1] * 4, 0.5, 2, 0.0) == 1.0
+    # chase 0: der Ursprung ist EXAKT der alte Mitte-Gauss-Wert
+    assert ro.club_origin(5, 0.0, 0.61, 0.99) == 0.61
+
+
+def test_club_chase_wechselt_die_seite_je_kick():
+    """Ping-Pong: gerade Kicks links, ungerade rechts — der Scanner."""
+    links = ro.club_origin(2, 1.0, 0.5, 0.5)
+    rechts = ro.club_origin(3, 1.0, 0.5, 0.5)
+    assert links < 0.35 and rechts > 0.65
+    # Jitter streut, bleibt aber auf seiner Seite und nie AN der Kante
+    for j in (0.0, 0.25, 0.75, 1.0):
+        for kick in range(8):
+            pos = ro.club_origin(kick, 1.0, 0.5, j)
+            assert 0.05 <= pos <= 0.95
+            assert (pos < 0.5) == (kick % 2 == 0)
+
+
+def test_club_phrase_kippt_akzent_und_richtung():
+    """Der Szenen-Bump der Lichtoperatoren: alle N Kicks kippt das Bild."""
+    assert ro.club_accent_delta(0, 16, 26.0) == 26.0
+    assert ro.club_accent_delta(15, 16, 26.0) == 26.0
+    assert ro.club_accent_delta(16, 16, 26.0) == -26.0
+    assert ro.club_accent_delta(32, 16, 26.0) == 26.0
+    assert ro.club_phase(15, 16) == 0 and ro.club_phase(16, 16) == 1
+
+
+def test_club_duck_dippt_hart_und_erholt_glatt():
+    """Sidechain: volle Tiefe auf dem Kick, smoothstep zurueck auf 1."""
+    assert ro.club_duck_gain(0.0, 0.22, 0.24) == 1.0 - 0.22
+    assert ro.club_duck_gain(0.24, 0.22, 0.24) == 1.0
+    assert ro.club_duck_gain(9.0, 0.22, 0.24) == 1.0
+    # monoton erholend
+    w = [ro.club_duck_gain(a, 0.22, 0.24) for a in (0.0, 0.06, 0.12, 0.18, 0.24)]
+    assert w == sorted(w)
+
+
+def test_club_noise_ist_stetig_und_begrenzt():
+    a = ro.club_noise_lattice(150, 3)
+    b = ro.club_noise_lattice(150, 4)
+    # an der Stufengrenze treffen sich die Lerps (kein Springen)
+    assert abs(ro.club_noise_at(a, b, 1.0, 7, 0.1)
+               - ro.club_noise_at(b, ro.club_noise_lattice(150, 5), 0.0, 7, 0.1)) < 1e-9
+    for blk in range(0, 150, 13):
+        v = ro.club_noise_at(a, b, 0.37, blk, 0.1)
+        assert 0.9 <= v <= 1.1
+
+
+def test_club_akzentrampe_bleibt_bunt_nie_weiss():
+    """Der Zweiklang darf die Nie-Weiss-Doktrin nicht unterlaufen: auch die
+    gedrehte Akzent-Rampe haelt Buntheit (Drehung erhaelt Chroma)."""
+    for delta in (26.0, -26.0):
+        for r, g, b in ro.build_gradient(32, 140, 90, 0.0, delta):
+            if max(r, g, b) < 40:
+                continue
+            assert max(r, g, b) - min(r, g, b) >= 30, (delta, (r, g, b))
+
+
+def test_club_spiegel_nur_fuer_harte_schlaege():
+    assert not ro.club_double(0.5)
+    assert not ro.club_double(0.79)
+    assert ro.club_double(0.8) and ro.club_double(1.0)

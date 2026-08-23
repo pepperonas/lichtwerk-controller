@@ -1251,13 +1251,22 @@ class LichtwerkWebController:
         spread_ms = max(60.0, min(600.0, IRIS['organic_spread_ms'] * f))
         t_spread = max(0.05, spread_ms / 1000.0 * (1.35 - 0.7 * v))
         pulses = ep.setdefault('iris_red_pulses', [])
-        pulses.append({
+        # Club-Puls: der Kick-Zaehler treibt Chase-Seite + Phrasen-Kipp;
+        # der Zeitstempel den Sidechain-Duck des Betts.
+        kicks = ep.get('iris_club_kicks', 0) + 1
+        ep['iris_club_kicks'] = kicks
+        ep['iris_club_kick_t'] = t
+        org01 = red_organic.club_origin(
+            kicks, IRIS['club_chase'],
+            0.5 + rng.gauss(0.0, 0.2), rng.random())
+        basis = {
             'born': t,
             'peak': red_organic.vel_peak(v, IRIS['organic_vel_gamma'],
                                          IRIS['organic_vel_floor'])
             * peak_f * thin,
-            # Ursprung Mitte-bias, nie AN der Kante (wie die Wellen, M6)
-            'origin': max(0.05, min(0.95, 0.5 + rng.gauss(0.0, 0.2))) * n,
+            # Chase-Ursprung (club_chase 0 = alter Mitte-bias), nie AN der
+            # Kante (wie die Wellen, M6)
+            'origin': org01 * n,
             'spread_v': n / t_spread,
             'dscale': dscale,
             # Beat-Zeitbasis, beim Spawn eingefroren (Sekunden, geklemmt):
@@ -1267,9 +1276,17 @@ class LichtwerkWebController:
                                   * f * stretch)) * dscale,
             'tail': max(0.100, min(0.900, IRIS['organic_tail_ms'] / 1000.0
                                    * f * stretch)),
-        })
+        }
+        pulses.append(basis)
+        # Harter Schlag (Scanner): Spiegel-Puls vom anderen Ende, etwas
+        # leiser — die Summe soll knallen, nicht clippen (soft-knee faengt).
+        if IRIS['club_chase'] > 0.0 and red_organic.club_double(v):
+            spiegel = dict(basis)
+            spiegel['origin'] = (1.0 - org01) * n
+            spiegel['peak'] = basis['peak'] * 0.75
+            pulses.append(spiegel)
         if len(pulses) > int(IRIS['organic_pulse_max']):
-            pulses.pop(0)
+            del pulses[0:len(pulses) - int(IRIS['organic_pulse_max'])]
 
     def _organic_gradient(self, t):
         """Farbrampe (M4), gecacht; Hue-Drift in Minuten-Periode, auf
@@ -1294,6 +1311,27 @@ class LichtwerkWebController:
                 key[0] / 124.0, iris_hue_deg())
             ep['iris_grad_key'] = key
         return ep['iris_grad']
+
+    def _accent_gradient(self, t):
+        """Akzent-Rampe des Club-Zweiklangs: die Grundrampe, um
+        club_accent_deg im Oklab-Farbkreis gedreht — Kicks blitzen in einem
+        NACHBAR-Ton des Betts (Base+Accent, der Club-Look). Das Vorzeichen
+        kippt je Phrase (Szenen-Bump). Drehung erhaelt die Buntheit, Weiss
+        bleibt unerreichbar (Rotations-Doktrin). Eigener Cache: der
+        Phrasen-Kipp wechselt haeufiger als der Minuten-Drift."""
+        deg = IRIS['club_accent_deg']
+        if deg <= 0.0:
+            return None
+        ep = self.effect_params
+        delta = red_organic.club_accent_delta(
+            ep.get('iris_club_kicks', 0), IRIS['club_phrase'], deg)
+        key = (round(delta * 4.0), IRIS['red_r'], IRIS['red_g'], IRIS['red_b'])
+        if ep.get('iris_agrad') is None or ep.get('iris_agrad_key') != key:
+            ep['iris_agrad'] = red_organic.build_gradient(
+                32, IRIS['organic_g_max'], IRIS['organic_b_max'],
+                0.0, iris_hue_deg() + delta)
+            ep['iris_agrad_key'] = key
+        return ep['iris_agrad']
 
     def _organic_blocks(self, t, n, glow_tbl, scale, duck_f, freerun_now):
         """Per-4er-Block: Bett + gestapelte Pulse (mit Herkunft) + Bass-
@@ -1355,11 +1393,42 @@ class LichtwerkWebController:
                 live.append((e_p, p['origin'], age * p['spread_v']))
 
         grad = self._organic_gradient(t)
+        agrad = self._accent_gradient(t)
         knee = IRIS['organic_knee']
         gain_b = IRIS['organic_bass_gain']
         dith = IRIS['organic_dither']
         inv_n = 1.0 / max(1, n)
         nb = len(glow_tbl)
+        # Club: Sidechain-Duck des BETTS je Kick (die Pulse selbst bleiben
+        # voll — der Grund gibt unter ihnen nach, das ist der Pump).
+        kick_t = ep.get('iris_club_kick_t')
+        bett_duck = 1.0
+        if kick_t is not None:
+            ts_f = self._tempo_state['f'] if self._tempo_state else 1.0
+            bett_duck = red_organic.club_duck_gain(
+                t - kick_t, IRIS['club_duck'],
+                IRIS['club_duck_ms'] / 1000.0 * ts_f)
+        bed_eff = bed * bett_duck
+        # Club: Noise-Glut + Phrasen-Flip der Wellen-Laufrichtung — in der
+        # geraden Phrase laeuft die Tabelle vorwaerts, in der ungeraden
+        # rueckwaerts (Szenen-Bump; glow_tbl selbst bleibt unangetastet,
+        # die classic-Pfade lesen sie weiter vorwaerts).
+        n_amp = IRIS['club_noise']
+        n_hz = IRIS['club_noise_hz']
+        # Rauschgitter je Zeitstufe cachen (Budget-Lehre: 300 Hashes je
+        # Frame kosteten 17 ms) — Rebuild nur beim Stufenwechsel.
+        n_a = n_b = None
+        n_fr = 0.0
+        if n_amp > 0.0:
+            k = int(t * n_hz)
+            n_fr = t * n_hz - k
+            if ep.get('iris_noise_k') != k:
+                ep['iris_noise_k'] = k
+                ep['iris_noise_a'] = red_organic.club_noise_lattice(nb, k)
+                ep['iris_noise_b'] = red_organic.club_noise_lattice(nb, k + 1)
+            n_a, n_b = ep['iris_noise_a'], ep['iris_noise_b']
+        flip = red_organic.club_phase(ep.get('iris_club_kicks', 0),
+                                      IRIS['club_phrase']) == 1
         rgb_out = []
         col_out = []
         _cover = red_organic.pulse_cover
@@ -1372,8 +1441,13 @@ class LichtwerkWebController:
             for e_p, org, reach in live:
                 acc += e_p * _cover(abs(x - org), reach, edge)
             press = _press(x * inv_n, env, gain_b)
-            v = 1.0 - (1.0 - bed) * (1.0 - _knee(acc, knee)) * (1.0 - press)
-            v *= glow_tbl[b] * duck_f
+            puls = _knee(acc, knee)
+            v = 1.0 - (1.0 - bed_eff) * (1.0 - puls) * (1.0 - press)
+            gw = glow_tbl[nb - 1 - b] if flip else glow_tbl[b]
+            if n_a is not None:
+                n01 = n_a[b] + (n_b[b] - n_a[b]) * n_fr
+                gw *= 1.0 + n_amp * (2.0 * n01 - 1.0)
+            v *= gw * duck_f
             if v <= 0.0:
                 rgb_out.append((0.0, 0.0, 0.0))
                 col_out.append(0)
@@ -1389,6 +1463,17 @@ class LichtwerkWebController:
             rf = g0[0] + (g1[0] - g0[0]) * fr
             gf = g0[1] + (g1[1] - g0[1]) * fr
             bf = g0[2] + (g1[2] - g0[2]) * fr
+            # Akzent-Zweiklang: wo der PULS traegt, kippt die Farbe zur
+            # Akzent-Rampe — das Bett bleibt Grundton, der Kick blitzt im
+            # Nachbar-Ton. Mix folgt dem Puls-Anteil (0..1), nie voll:
+            # 0.85 laesst den Grundton durchscheinen (Glut, kein Umschalter).
+            if agrad is not None and puls > 0.02:
+                m = min(1.0, puls * 1.15) * 0.85
+                a0 = agrad[i0]
+                a1 = agrad[i0 + 1] if i0 < 31 else a0
+                rf += ((a0[0] + (a1[0] - a0[0]) * fr) - rf) * m
+                gf += ((a0[1] + (a1[1] - a0[1]) * fr) - gf) * m
+                bf += ((a0[2] + (a1[2] - a0[2]) * fr) - bf) * m
             rgb_out.append((rf, gf, bf))
             rs, gs, bs = rf * scale, gf * scale, bf * scale
             if dith:
@@ -1520,6 +1605,12 @@ class LichtwerkWebController:
             self.effect_params['iris_frame_no'] = 0      # Dither-Taktzaehler
             self.effect_params['iris_grad'] = None       # Farbrampe (M4), lazy
             self.effect_params['iris_grad_key'] = None
+            # Club-Puls (2026-08-23): Kick-Zaehler treibt Chase-Seite,
+            # Phrasen-Kipp und Wellen-Flip; letzter Kick-Zeitpunkt den Duck.
+            self.effect_params['iris_club_kicks'] = 0
+            self.effect_params['iris_club_kick_t'] = None
+            self.effect_params['iris_agrad'] = None      # Akzent-Rampe, lazy
+            self.effect_params['iris_agrad_key'] = None
         t = mono() - t0
 
         # ── Tempo-Skalierung (Tempo-Brief 2026-08-13): NUR organic+tempo.

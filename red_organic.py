@@ -129,6 +129,78 @@ def build_gradient(steps, g_max, b_max, drift=0.0, hue_deg=0.0):
     return out
 
 
+# ── Club-Puls (2026-08-23, Nutzerwunsch „Club vibes") ───────────────────
+# Fuenf Techniken aus der Club-Lichtpraxis, alle pur und einzeln 0-bar:
+# Akzent-Zweiklang (Base+Accent = DER Club-Look), Ping-Pong-Chase,
+# Phrasen-Bump (Szenenwechsel alle N Kicks), Sidechain-Duck, Noise-Glut.
+
+
+def club_accent_delta(kick_count, phrase, deg):
+    """Vorzeichenbehaftete Akzent-Drehung (Grad) fuer die aktuelle Phrase.
+
+    Lichtoperatoren "bumpen" Szenen alle 8/16 Takte — hier kippt die
+    Akzent-Richtung je Phrase (+deg <-> -deg): mal glueht der Kick waermer,
+    mal kaelter als das Bett. deg 0 = kein Zweiklang (Alt-Verhalten)."""
+    if deg <= 0.0 or phrase <= 0:
+        return 0.0
+    return deg if (int(kick_count) // int(phrase)) % 2 == 0 else -deg
+
+
+def club_phase(kick_count, phrase):
+    """0/1 je Phrase — treibt u. a. die Laufrichtung der Glut-Wellen."""
+    if phrase <= 0:
+        return 0
+    return (int(kick_count) // int(phrase)) % 2
+
+
+def club_origin(kick_count, chase, gauss01, jitter01):
+    """Puls-Ursprung 0..1: beat-gelockter L/R-Chase statt Mitte-Zufall.
+
+    chase blendet zwischen dem alten Mitte-Gauss (0) und dem vollen
+    Ping-Pong-Muster (1). `gauss01` ist der ALTE Zufallsort (der Aufrufer
+    wuerfelt — die Funktion bleibt pur), `jitter01` streut das Muster leicht,
+    damit der Chase lebt statt zu stempeln. Nie AN der Kante (M6)."""
+    mitte = max(0.05, min(0.95, gauss01))
+    if chase <= 0.0:
+        return mitte
+    seite = 0.20 if int(kick_count) % 2 == 0 else 0.80
+    seite += (jitter01 - 0.5) * 0.12
+    pos = mitte + (seite - mitte) * min(1.0, chase)
+    return max(0.05, min(0.95, pos))
+
+
+def club_double(vel, thr=0.8):
+    """Harter Schlag: Puls feuert GESPIEGELT von beiden Enden (Scanner)."""
+    return vel >= thr
+
+
+def club_duck_gain(age, depth, dur_s):
+    """Sidechain-Pump: das Bett duckt sich auf dem Kick weg und kommt
+    smoothstep zurueck — der Puls wirkt doppelt so hart, weil der Grund
+    unter ihm nachgibt. depth 0 ODER dur 0 = exakt 1.0 (Alt-Verhalten)."""
+    if depth <= 0.0 or dur_s <= 0.0 or age < 0.0:
+        return 1.0
+    u = min(1.0, age / dur_s)
+    return 1.0 - depth * (1.0 - u * u * (3.0 - 2.0 * u))
+
+
+def club_noise_lattice(nb, k, h01=None):
+    """Rauschgitter einer Zeitstufe: ein Zufallswert je Block (WLED-"Noise"-
+    Familie). ⚠️ Wird GECACHT, nicht je Frame gebaut: die Stufe wechselt nur
+    alle 1/freq Sekunden — 300 Hashes je Frame rissen das 10-ms-Budget
+    (gemessen 17 ms). Im Frame bleibt ein einziges Lerp je Block."""
+    h = h01 or hash01
+    return [h(b, k, 7) for b in range(nb)]
+
+
+def club_noise_at(a, b_, fr, block, amp):
+    """Stetiges Rauschen aus zwei gecachten Gittern: amp 0 = exakt 1.0."""
+    if amp <= 0.0:
+        return 1.0
+    n01 = a[block] + (b_[block] - a[block]) * fr
+    return 1.0 + amp * (2.0 * n01 - 1.0)
+
+
 # ── Puls-Huellkurve (ADSR-artig, analytisch in der Zeit) ─────────────────
 
 
