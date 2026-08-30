@@ -135,3 +135,42 @@ def test_cards_do_not_stretch_to_the_row_height():
     """Ohne `align-items:start` waren die Karten so hoch wie die hoechste der
     Zeile — unter dem Power-Knopf standen dadurch ~300 px Nichts."""
     assert re.search(r"main\s*\{\s*align-items:\s*start", CSS)
+
+
+# ---- Phase-3-Adoption: Slider sprechen den Suite-Dialekt (2026-08-30) -------
+# Der Audit-Befund "blaue Slider" war KEIN App-CSS: die Helligkeit/Tempo-Slider
+# sassen seit dem Kompakt-Pass in .level-row, gestylt war aber nur der tote
+# .slider-container — sie rendrten NATIV (Chrome-Blau). Jetzt tragen alle
+# fuenf .sh-slider (shared/ui.css), die toten Regeln sind raus.
+
+def test_alle_slider_tragen_den_suite_dialekt():
+    import re
+    for sid in ("red-slider", "green-slider", "blue-slider",
+                "brightness-slider", "speed-slider"):
+        m = re.search(r'<input[^>]*id="%s"[^>]*>' % sid, HTML)
+        assert m, f"{sid} fehlt im Template"
+        assert 'class="sh-slider"' in m.group(0), \
+            f"{sid} traegt nicht .sh-slider — rendert nativ (das Chrome-Blau)"
+
+
+def test_kein_eigenes_slider_skinning_mehr():
+    # Kommentarfrei pruefen (Haus-Regel: Doku zitiert entfernte Muster).
+    import re
+    pur = re.sub(r"/\*.*?\*/", "", CSS, flags=re.S)
+    assert "-webkit-slider-thumb" not in pur, \
+        "eigene Thumb-Regeln neben .sh-slider = zwei Dialekte"
+    assert ".slider-container" not in pur, \
+        "der tote .slider-container ist wieder da"
+
+
+def test_versionen_gebumpt():
+    assert "style.css?v=8" in HTML, "style.css-Bump fehlt (Cache haelt sonst alt)"
+    assert "app.js?v=3" in HTML, "app.js-Bump fehlt (Fuellungs-Verdrahtung neu)"
+
+
+def test_fuellung_ist_verdrahtet():
+    # Der Fuellstand kommt aus app.js (--sh-slider-fill) — an ALLEN Stellen,
+    # die Werte schreiben: Handler, setColorValues, Status-Load, Init.
+    assert JS.count("fuelleSlider") >= 9, \
+        "fuelleSlider fehlt an einer Schreibstelle (Handler/Preset/Status/Init)"
+    assert "--sh-slider-fill" in JS

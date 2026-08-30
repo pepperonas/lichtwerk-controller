@@ -7,7 +7,22 @@ class LichtwerkController {
         this.initializeElements();
         this.attachEventListeners();
         this.startStatusUpdates();
+        this.fuelleAlleSlider();
         this.loadStatus();
+    }
+
+    // Fuellstand fuer den geteilten .sh-slider (shared/ui.css): Prozent aus
+    // value/min/max als --sh-slider-fill. Muss an JEDER Schreibstelle laufen.
+    fuelleSlider(slider) {
+        const min = parseFloat(slider.min) || 0;
+        const max = parseFloat(slider.max) || 100;
+        const p = ((slider.value - min) / (max - min)) * 100;
+        slider.style.setProperty('--sh-slider-fill', p + '%');
+    }
+
+    fuelleAlleSlider() {
+        [this.redSlider, this.greenSlider, this.blueSlider,
+         this.brightnessSlider, this.speedSlider].forEach(s => this.fuelleSlider(s));
     }
     
     initializeElements() {
@@ -60,6 +75,7 @@ class LichtwerkController {
                 const value = parseInt(e.target.value);
                 const valueInput = [this.redValue, this.greenValue, this.blueValue][index];
                 valueInput.value = value;
+                this.fuelleSlider(slider);
                 this.updateColor();
             });
         });
@@ -72,6 +88,7 @@ class LichtwerkController {
                 e.target.value = value;
                 const slider = [this.redSlider, this.greenSlider, this.blueSlider][index];
                 slider.value = value;
+                this.fuelleSlider(slider);
                 this.updateColor();
             });
         });
@@ -88,6 +105,7 @@ class LichtwerkController {
         this.brightnessSlider.addEventListener('input', (e) => {
             const value = parseInt(e.target.value);
             this.brightnessValue.textContent = value;
+            this.fuelleSlider(this.brightnessSlider);
             this.setBrightness(value);
         });
         
@@ -95,6 +113,7 @@ class LichtwerkController {
         this.speedSlider.addEventListener('input', (e) => {
             const value = parseInt(e.target.value);
             this.speedValue.textContent = value;
+            this.fuelleSlider(this.speedSlider);
             this.setSpeed(value);
         });
         
@@ -136,6 +155,7 @@ class LichtwerkController {
         this.redValue.value = r;
         this.greenValue.value = g;
         this.blueValue.value = b;
+        [this.redSlider, this.greenSlider, this.blueSlider].forEach(sl => this.fuelleSlider(sl));
         this.updateColor();
     }
     
@@ -190,10 +210,12 @@ class LichtwerkController {
         
         // Brightness
         this.brightnessSlider.value = status.brightness;
+        this.fuelleSlider(this.brightnessSlider);
         this.brightnessValue.textContent = status.brightness;
         
         // Speed
         this.speedSlider.value = status.speed;
+        this.fuelleSlider(this.speedSlider);
         this.speedValue.textContent = status.speed;
         
         // Effect

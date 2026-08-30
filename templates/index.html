@@ -6,7 +6,7 @@
     <title>Lichtwerk Controller</title>
     <link rel="stylesheet" href="/shared/theme.css">
 <link rel="stylesheet" href="/shared/ui.css?v=1">
-    <link rel="stylesheet" href="static/css/style.css?v=7">
+    <link rel="stylesheet" href="static/css/style.css?v=8">
     <link rel="manifest" href="static/site.webmanifest">
     <meta name="theme-color" content="#2B2E3B">
 <style>
@@ -158,17 +158,17 @@
                     <div class="color-inputs">
                         <div class="color-input-group">
                             <label for="red-slider">Red</label>
-                            <input type="range" id="red-slider" min="0" max="255" value="255">
+                            <input type="range" class="sh-slider" id="red-slider" min="0" max="255" value="255">
                             <input type="number" id="red-value" min="0" max="255" value="255">
                         </div>
                         <div class="color-input-group">
                             <label for="green-slider">Green</label>
-                            <input type="range" id="green-slider" min="0" max="255" value="255">
+                            <input type="range" class="sh-slider" id="green-slider" min="0" max="255" value="255">
                             <input type="number" id="green-value" min="0" max="255" value="255">
                         </div>
                         <div class="color-input-group">
                             <label for="blue-slider">Blue</label>
-                            <input type="range" id="blue-slider" min="0" max="255" value="255">
+                            <input type="range" class="sh-slider" id="blue-slider" min="0" max="255" value="255">
                             <input type="number" id="blue-value" min="0" max="255" value="255">
                         </div>
                     </div>
@@ -231,19 +231,19 @@
                 <h3>Helligkeit &amp; Tempo</h3>
                 <div class="level-row">
                     <label for="brightness-slider">Helligkeit</label>
-                    <input type="range" id="brightness-slider" min="0" max="255" value="100">
+                    <input type="range" class="sh-slider" id="brightness-slider" min="0" max="255" value="100">
                     <output class="slider-value" id="brightness-value" for="brightness-slider">100</output>
                 </div>
                 <div class="level-row">
                     <label for="speed-slider">Tempo</label>
-                    <input type="range" id="speed-slider" min="1" max="100" value="50">
+                    <input type="range" class="sh-slider" id="speed-slider" min="1" max="100" value="50">
                     <output class="slider-value" id="speed-value" for="speed-slider">50</output>
                 </div>
             </section>
         </main>
     </div>
 
-    <script src="static/js/app.js?v=2"></script>
+    <script src="static/js/app.js?v=3"></script>
 <script>/* cursor-sheen (gated, rAF-throttled, additiv) */
 (function(){try{
   if(!matchMedia('(hover:hover) and (pointer:fine)').matches) return;

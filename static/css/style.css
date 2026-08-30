@@ -316,42 +316,10 @@ h4 {
     letter-spacing: 0.5px;
 }
 
+/* Slider-Skinning kommt seit 2026-08-30 aus shared/ui.css (.sh-slider) —
+   hier bleibt nur das Layout der Zeile. */
 .color-input-group input[type="range"] {
     flex: 1;
-    height: 8px;
-    border-radius: var(--radius-sm);
-    background: var(--background-dark);
-    outline: none;
-    -webkit-appearance: none;
-    transition: background 0.3s ease;
-}
-
-.color-input-group input[type="range"]::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    background: var(--accent-blue);
-    cursor: pointer;
-    border: 2px solid white;
-    box-shadow: var(--shadow-sm);
-    transition: all 0.3s ease;
-}
-
-.color-input-group input[type="range"]::-webkit-slider-thumb:hover {
-    transform: scale(1.1);
-    box-shadow: var(--shadow);
-}
-
-.color-input-group input[type="range"]::-moz-range-thumb {
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    background: var(--accent-blue);
-    cursor: pointer;
-    border: 2px solid white;
-    box-shadow: var(--shadow-sm);
 }
 
 .color-input-group input[type="number"] {
@@ -457,55 +425,6 @@ h4 {
 .effect-btn.active:hover {
     background: var(--accent-blue);
     filter: brightness(1.1);
-}
-
-/* Sliders */
-.slider-container {
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-4);
-    padding: var(--spacing-3);
-    background: var(--background-darker);
-    border-radius: var(--radius-lg);
-}
-
-.slider-container input[type="range"] {
-    flex: 1;
-    height: 10px;
-    border-radius: var(--radius-sm);
-    background: var(--background-dark);
-    outline: none;
-    -webkit-appearance: none;
-    transition: background 0.3s ease;
-    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.2);
-}
-
-.slider-container input[type="range"]::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 24px;
-    height: 24px;
-    border-radius: 50%;
-    background: var(--accent-blue);
-    cursor: pointer;
-    border: 3px solid white;
-    box-shadow: var(--shadow);
-    transition: all 0.3s ease;
-}
-
-.slider-container input[type="range"]::-webkit-slider-thumb:hover {
-    transform: scale(1.1);
-    box-shadow: var(--shadow-lg);
-}
-
-.slider-container input[type="range"]::-moz-range-thumb {
-    width: 24px;
-    height: 24px;
-    border-radius: 50%;
-    background: var(--accent-blue);
-    cursor: pointer;
-    border: 3px solid white;
-    box-shadow: var(--shadow);
 }
 
 .slider-value {
@@ -647,11 +566,7 @@ main {
         min-width: auto;
         text-align: center;
     }
-    
-    .slider-container {
-        flex-direction: column;
-        gap: var(--spacing-3);
-    }
+
 }
 /* ===== MD3 Expressive Motion ===== */
 @keyframes md-enter{0%{opacity:0;transform:translateY(34px) scale(.92)}55%{opacity:1;transform:translateY(-8px) scale(1.02)}78%{transform:translateY(3px) scale(.996)}100%{opacity:1;transform:translateY(0) scale(1)}}
