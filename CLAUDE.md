@@ -76,6 +76,25 @@ Strom fällt dadurch von 21,1 auf **16,8 A** worst case (10,8 Wash + 2,7 Sparks 
 
 A full-strip wash at `exposure` 1.8 peaks near **13.7 A** on 600 LEDs (15.9 A with both overlays) (the service logs the figure on arm). Set `max_current_a` to the supply rating if it is tighter than that.
 
+## Strip-Besitz: immer nur EINE App (2026-09-27)
+
+Lichtwerk-App und dB-Analyse (disco: Strip-Warn / Disco-Strip) steuerten den Strip gleichzeitig. Jetzt gilt **„letzte Aktion gewinnt"** (Nutzerentscheid), mit lichtwerk als Schiedsrichter:
+
+- `controller.owner` ∈ `lichtwerk` | `disco`, persistiert in `strip_owner.json` (gitignored, überlebt Neustarts), in `/api/status.owner` und `GET /api/owner`.
+- disco beansprucht/gibt frei per `POST /api/owner {owner, restore}`. Beanspruchen: Nutzerbild sichern (`_pre_warn` + Power), dunkel. Freigeben: Einstellungen zurück, `restore:true` (Disco-Strip aus) holt auch die Power zurück, sonst dunkel (Strip-Warn aus).
+- disco schickt `X-Lichtwerk-Client: disco`. Ein `before_request`-Tor über `OWNED_WRITES` (power/effect/color/solid/brightness/speed/theater_mode): **disco ohne Besitz → 409**, **jede andere Bedienung bei disco-Besitz → Übernahme** (Nutzerbild zurück, dann gilt die Anfrage) + fire-and-forget `POST disco:/api/strip_released`. Konfiguration (`/api/iris/*`) und Warn-Ereignisse (kick/bass/event) sind keine Bedienung.
+- ⚠️ Vorher lag nach jedem Warn `current_effect=iris_warn` + Helligkeit 255 herum — ein Power-On aus Lichtwerk/Dashboard startete den Warn-Effekt ohne disco dahinter. Die Übernahme stellt das Nutzerbild wieder her.
+
+## Hängende LEDs — drei Renderer-Fehler (2026-09-27)
+
+- **Strobe bei Tempo 100:** `% (200 - speed*2)` = `% 0` → ZeroDivisionError in JEDEM Frame; der Loop fing ihn ab, der Strip **fror auf dem letzten Bild ein**. Periode jetzt `max(60, …)`.
+- **Sparkle** malte nur die Funken: der Rest des vorigen Effekts blieb stehen, ausgelaufene Funken hielten ihren letzten Glimmwert. Jeder Frame beginnt jetzt mit `_blank()` (Puffer schwarz, **ohne** Hardware-Write). Chase/Strobe nutzen `_blank()` statt `clear()` — `clear()` schreibt zweimal auf den Draht, das anschließende `show()` fiel ins 18-ms-EBUSY-Fenster.
+- **Parallele Maler:** `/api/solid`, `/api/effect iris_warn` und `warn_gate` malen für die Latenz in-request, parallel zum Effekt-Loop. `_strip_lock` ist jetzt ein **RLock um den ganzen Frame inkl. power-Prüfung** — sonst konnte ein Frame, der `power=True` noch gesehen hatte, NACH dem Clear eines power-off gezeigt werden.
+- `pio_strip.show_payload()` gab das Write-Ergebnis nicht zurück → `MultiStrip.show()` erkannte verlorene Frames nie.
+- **Geräte-Zuordnung ohne dmesg:** der Ringpuffer rotiert nach Tagen; der Rang-Rückfall zählte alle konfigurierten Pins [18, 21] und schrieb die GPIO-21-Kette auf ein nicht existierendes `/dev/leds1` (lief nur zufällig als „GPIO 18" auf leds0). Gerankt wird jetzt nur unter den in `config.txt` **aktiven** Overlays (`active_overlay_pins`).
+
+Tests: `tests/test_strip_owner.py`, `tests/test_no_stale_pixels.py` (Sentinel-Probe über alle 13 Effekte + Lock-Probe), `tests/test_pio_strip.py`; alle Fixes mutationsgeprüft. Suite **292**.
+
 ## Key Commands
 
 ```bash

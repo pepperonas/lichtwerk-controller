@@ -166,7 +166,9 @@ class PixelStrip:
         scale = max(0, min(255, int(gain)))
         if scale < 255:
             payload = payload.translate(self._brightness_lut(scale))
-        self._write(payload)
+        # Ergebnis durchreichen: MultiStrip.show() erkennt verlorene Frames
+        # nur daran (vorher None -> ein gedroppter Clear galt als gelandet).
+        return self._write(payload)
 
     @property
     def dropped_frames(self) -> int:

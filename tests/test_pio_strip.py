@@ -271,3 +271,46 @@ def test_pin_without_overlay_is_skipped_not_misassigned():
     assert "if m:\n            return m.get(int(pin))" in body or "return m.get(int(pin))" in body
     assert "if dev in belegt:" in src
     assert "if not dev or not os.path.exists(dev):" in src
+
+
+def test_multistrip_reports_a_dropped_chain(tmp_path, monkeypatch):
+    """show_payload muss das Write-Ergebnis zurueckgeben — sonst erkennt
+    MultiStrip.show() einen verlorenen Frame nie, und clear() latcht
+    'schwarz', waehrend eine Kette ihr altes Bild behaelt."""
+    from pio_strip import MultiStrip
+    a = PixelStrip(2, device=str(tmp_path / "a"))
+    b = PixelStrip(2, device=str(tmp_path / "b"))
+    for s in (a, b):
+        s._begun = True
+    monkeypatch.setattr(a, "_write", lambda payload: True)
+    monkeypatch.setattr(b, "_write", lambda payload: False)
+    assert MultiStrip([a, b]).show() is False
+    monkeypatch.setattr(b, "_write", lambda payload: True)
+    assert MultiStrip([a, b]).show() is True
+
+
+def test_rank_fallback_only_counts_active_overlays(monkeypatch):
+    """dmesg rotiert (Feldbefund 2026-09-27 nach 12 Tagen Laufzeit: keine
+    ws2812-Zeile mehr). Der Rang-Fallback zaehlte dann ALLE konfigurierten
+    Pins [18, 21] und schrieb die GPIO-21-Kette auf /dev/leds1 (existiert
+    nicht) — die echte Kette lief nur zufaellig als 'GPIO 18' auf leds0.
+    Gerankt wird unter den in config.txt AKTIVEN Overlays."""
+    import web_controller as wc
+    cfg = ("dtoverlay=ws2812-pio,gpio=21,num_leds=600,brightness=255\n"
+           "#dtoverlay=ws2812-pio,gpio=18,num_leds=600,brightness=255\n")
+    assert wc.active_overlay_pins(cfg) == {21}
+    both = cfg.replace("#dtoverlay", "dtoverlay")
+    assert wc.active_overlay_pins(both) == {18, 21}
+
+    import subprocess
+    monkeypatch.setattr(subprocess, "run",
+                        lambda *a, **k: type("R", (), {"stdout": ""})())
+    monkeypatch.setattr(wc, "_boot_config_text", lambda: cfg)
+    assert wc.resolve_pio_device(21, [21, 18]) == "/dev/leds0"
+    assert wc.resolve_pio_device(18, [21, 18]) is None
+    monkeypatch.setattr(wc, "_boot_config_text", lambda: both)
+    assert wc.resolve_pio_device(18, [21, 18]) == "/dev/leds0"
+    assert wc.resolve_pio_device(21, [21, 18]) == "/dev/leds1"
+    # config.txt unlesbar -> alter Rang ueber alle Pins
+    monkeypatch.setattr(wc, "_boot_config_text", lambda: None)
+    assert wc.resolve_pio_device(21, [21, 18]) == "/dev/leds1"

@@ -76,3 +76,7 @@ coverage.xml
 dmypy.json
 core
 *.core
+
+# Laufzeit: Strip-Besitz
+strip_owner.json
+strip_owner.json.tmp

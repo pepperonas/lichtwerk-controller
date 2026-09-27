@@ -329,6 +329,106 @@ def iris_meteor_jitter(pixel, seed):
 app = Flask(__name__)
 CORS(app)
 
+# ---------------------------------------------------------------------------
+# Strip-Besitz (2026-09-27, Nutzerentscheid "letzte Aktion gewinnt")
+# ---------------------------------------------------------------------------
+OWNER_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          'strip_owner.json')
+DISCO_URL = os.environ.get('LICHTWERK_DISCO_URL', 'http://127.0.0.1:5007')
+# Routen, mit denen jemand das Bild des Strips bestimmt. Konfiguration wie
+# /api/iris/colors oder die Warn-Ereignisse (kick/bass/event) gehoeren nicht
+# dazu: sie malen nichts, solange iris_warn nicht laeuft.
+OWNED_WRITES = frozenset(('/api/power', '/api/effect', '/api/color',
+                          '/api/solid', '/api/brightness', '/api/speed',
+                          '/api/theater_mode'))
+
+
+def _load_owner():
+    try:
+        with open(OWNER_FILE) as f:
+            o = json.load(f)
+        return o if o in ('disco', 'lichtwerk') else 'lichtwerk'
+    except (OSError, ValueError):
+        return 'lichtwerk'
+
+
+def _save_owner(owner):
+    tmp = OWNER_FILE + '.tmp'
+    try:
+        with open(tmp, 'w') as f:
+            json.dump(owner, f)
+        os.replace(tmp, OWNER_FILE)
+    except OSError as e:
+        print(f"strip owner nicht gespeichert: {e}")
+
+
+def _notify_disco_released():
+    """disco hat den Strip an eine Bedienung verloren — fire-and-forget.
+    Faellt die Meldung aus, merkt disco es spaetestens am 409 seines
+    naechsten Schreibzugriffs."""
+    def _send():
+        try:
+            import urllib.request
+            req = urllib.request.Request(
+                DISCO_URL + '/api/strip_released', data=b'{}', method='POST',
+                headers={'Content-Type': 'application/json'})
+            urllib.request.urlopen(req, timeout=1.0).close()
+        except Exception as e:
+            print(f"disco-Freigabe nicht zugestellt: {e}")
+    threading.Thread(target=_send, daemon=True, name='notify-disco').start()
+
+
+def _from_disco():
+    return request.headers.get('X-Lichtwerk-Client', '') == 'disco'
+
+
+def _set_owner(owner, takeover=False, restore=False):
+    """Besitzerwechsel. An disco: Nutzerbild sichern und dunkel schalten.
+    Zurueck an lichtwerk: Nutzer-Einstellungen wiederherstellen (sonst
+    startet das naechste Power-On den liegengebliebenen iris_warn mit 255)."""
+    c = controller
+    if owner == c.owner:
+        return
+    if owner == 'disco':
+        c._pre_warn = None
+        c._warn_snapshot()
+        c._owner_pre_power = bool(c.power)
+        c.power = False
+        c._iris_abort()
+    else:
+        c.strip_warn_mode = False
+        c.strip_warn_over = False
+        c._warn_restore()
+        if c.current_effect == 'iris_warn':
+            c.current_effect = 'solid'
+        c._iris_abort()
+        # disco gibt frei -> dunkel (bisherige Disarm-Semantik). Uebernimmt
+        # dagegen eine Bedienung, gilt ihr Zustand von vor dem Beanspruchen;
+        # die Anfrage selbst setzt danach, was sie setzt.
+        c.power = (bool(getattr(c, '_owner_pre_power', False))
+                   if (takeover or restore) else False)
+    c.owner = owner
+    _save_owner(owner)
+    c.wake_effect()
+    print(f"Strip-Besitz -> {owner}", flush=True)
+
+
+@app.before_request
+def _strip_ownership_gate():
+    if request.method != 'POST' or request.path not in OWNED_WRITES:
+        return None
+    if _from_disco():
+        if controller.owner != 'disco':
+            # Verspaeteter Warn-/Sync-POST nach einer Nutzer-Uebernahme
+            return jsonify({'status': 'not_owner', 'owner': controller.owner}), 409
+        return None
+    if controller.owner == 'disco':
+        with controller._owner_lock:
+            if controller.owner == 'disco':
+                _set_owner('lichtwerk', takeover=True)
+                _notify_disco_released()
+    return None
+
 
 def parse_pio_map(dmesg_text):
     """GPIO -> /dev/ledsN aus den Kernel-Meldungen des ws2812-pio-Treibers.
@@ -366,8 +466,36 @@ def resolve_pio_device(pin, pins_sorted):
             return m.get(int(pin))
     except Exception:
         pass
-    # Fallback = dieselbe Ordnung, nach der der Kernel nummeriert.
-    return "/dev/leds%d" % sorted(pins_sorted).index(int(pin))
+    # Fallback = dieselbe Ordnung, nach der der Kernel nummeriert — aber nur
+    # ueber die Pins, deren Overlay wirklich aktiv ist. dmesg rotiert nach
+    # Tagen Laufzeit; der Rang ueber ALLE konfigurierten Pins schrieb dann
+    # die einzige Kette (GPIO 21) auf ein nicht existierendes /dev/leds1.
+    pins = sorted(int(p) for p in pins_sorted)
+    aktiv = active_overlay_pins(_boot_config_text())
+    if aktiv:
+        pins = [p for p in pins if p in aktiv]
+        if int(pin) not in pins:
+            return None
+    return "/dev/leds%d" % pins.index(int(pin))
+
+
+def _boot_config_text():
+    for pfad in ('/boot/firmware/config.txt', '/boot/config.txt'):
+        try:
+            with open(pfad) as f:
+                return f.read()
+        except OSError:
+            continue
+    return None
+
+
+def active_overlay_pins(config_text):
+    """GPIOs der aktiven (nicht auskommentierten) ws2812-pio-Overlays."""
+    import re
+    if not config_text:
+        return set()
+    return {int(g) for g in re.findall(
+        r"^[ \t]*dtoverlay=ws2812-pio\b[^\n]*?\bgpio=(\d+)", config_text, re.M)}
 
 
 class LichtwerkWebController:
@@ -457,7 +585,15 @@ class LichtwerkWebController:
         self.strip_warn_over = False   # mirrors page body.over-iris
         self.strip_warn_mode = False   # True while Strip-Warn owns the strip
         self._pre_warn = None          # Nutzer-Einstellungen vor dem Warn (Restore beim Disarm)
-        self._strip_lock = threading.Lock()
+        # Strip-Besitz (2026-09-27): immer nur EINE App steuert den Strip.
+        # 'disco' = dB-Analyse (Strip-Warn / Disco-Strip), sonst 'lichtwerk'.
+        # Persistiert, damit ein Neustart keinem der beiden den Strip klaut.
+        self.owner = _load_owner()
+        self._owner_lock = threading.Lock()
+        # EIN Maler zur Zeit: der Effekt-Loop UND die Anfragen-Threads, die
+        # fuer die Latenz in-request malen (/api/solid, /api/effect iris_warn,
+        # warn_gate). Reentrant, weil Effekte clear() rufen.
+        self._strip_lock = threading.RLock()
 
         # Strip-Warn wash — the dB-Analyse page background, see iris_wash.py.
         # `max_current_a` caps the 5 V draw of a full-strip red wash by scaling
@@ -616,6 +752,16 @@ class LichtwerkWebController:
             int(cg + (g - cg) * w),
             int(cb + (b - cb) * w)))
     
+    def _blank(self):
+        """Puffer schwarz — OHNE Hardware-Write. Fuer Effekte, die pro Frame
+        nur einzelne Pixel malen: clear() schreibt zweimal auf den Draht, und
+        das show() des Effekts faellt dann ins 18-ms-EBUSY-Fenster."""
+        if hasattr(self.strip, 'fill'):
+            self.strip.fill(Color(0, 0, 0))
+        else:
+            for i in range(self.strip.numPixels()):
+                self.strip.setPixelColor(i, Color(0, 0, 0))
+
     def set_pixel(self, index, r, g, b, brightness=1.0):
         if not self.strip:
             return
@@ -690,7 +836,7 @@ class LichtwerkWebController:
     def effect_chase(self):
         if not self.strip:
             return
-        self.clear()
+        self._blank()
         segment_size = max(1, int(self.strip.numPixels() * 0.05))
         position = self.effect_params['chase_position']
         
@@ -704,6 +850,10 @@ class LichtwerkWebController:
     def effect_sparkle(self):
         if not self.strip:
             return
+        # Jeder Frame beginnt schwarz: sonst erbt Sparkle den Rest des
+        # vorigen Effekts, und ausgelaufene Funken bleiben auf ihrem letzten
+        # Glimmwert stehen (die 'haengenden' LEDs).
+        self._blank()
         # Fade existing sparkles
         for pixel_data in self.effect_params['sparkle_pixels']:
             pixel_data['brightness'] *= 0.9
@@ -732,11 +882,15 @@ class LichtwerkWebController:
     def effect_strobe(self):
         if not self.strip:
             return
-        if time.time() * 1000 % (200 - self.speed * 2) < 50:
+        # Periode nie 0: bei Tempo 100 war das `% 0` -> ZeroDivisionError in
+        # JEDEM Frame, der Loop fing ihn ab und der Strip fror auf dem
+        # letzten Bild ein.
+        period_ms = max(60, 200 - self.speed * 2)
+        if time.time() * 1000 % period_ms < min(50, period_ms // 2):
             for i in range(self.strip.numPixels()):
                 self.set_pixel(i, self.color[0], self.color[1], self.color[2])
         else:
-            self.clear()
+            self._blank()
         self.strip.show()
     
     def effect_meteor(self):
@@ -2523,6 +2677,13 @@ class LichtwerkWebController:
         self._cleared = False
 
     def run_effect(self):
+        # Der ganze Frame inkl. power-Pruefung unter dem Lock: sonst kann ein
+        # Frame, der power=True noch gesehen hat, NACH dem Clear eines
+        # power-off gezeigt werden — der Strip leuchtet dann trotz 'aus'.
+        with self._strip_lock:
+            self._run_effect_locked()
+
+    def _run_effect_locked(self):
         if self._wash_fade_t0 is not None:
             # The release ramp outlives power=False so it can run down to black
             self._paint_wash_fade()
@@ -2602,6 +2763,7 @@ class LichtwerkWebController:
             # Entkopplung 2026-08-12: UI kann anzeigen, dass Iris den Strip
             # besitzt und Einstellungen erst nach dem Warn-Modus greifen.
             'strip_warn_mode': self.strip_warn_mode,
+            'owner': self.owner,
             'settings_deferred': self._pre_warn is not None and self.strip_warn_mode,
             'iris_beat_s': (round(self.effect_params['iris_period_eff'], 3)
                             if self.current_effect == 'iris_warn'
@@ -2641,6 +2803,20 @@ def set_power():
         controller._iris_abort()
     controller.wake_effect()
     return jsonify({'status': 'ok', 'power': controller.power})
+
+
+@app.route('/api/owner', methods=['GET', 'POST'])
+def strip_owner():
+    """disco beansprucht/gibt den Strip frei: {owner: 'disco'|'lichtwerk'}."""
+    if request.method == 'POST':
+        data = request.get_json(silent=True) or {}
+        owner = data.get('owner')
+        if owner not in ('disco', 'lichtwerk'):
+            return jsonify({'status': 'error', 'message': 'owner?'}), 400
+        with controller._owner_lock:
+            _set_owner(owner, restore=bool(data.get('restore', False)))
+    return jsonify({'status': 'ok', 'owner': controller.owner,
+                    'power': controller.power})
 
 
 @app.route('/api/warn_gate', methods=['POST'])
@@ -3057,7 +3233,8 @@ def set_solid():
         controller.power = True
     controller.current_effect = 'solid'
     try:
-        controller.effect_solid()
+        with controller._strip_lock:
+            controller.effect_solid()
     except Exception as e:
         print(f"solid paint: {e}")
     controller.wake_effect()
