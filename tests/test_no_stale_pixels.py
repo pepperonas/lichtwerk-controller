@@ -123,3 +123,18 @@ def test_effect_loop_frame_runs_under_the_strip_lock():
         c.run_effect()
         assert c.strip.unguarded == 0, eff
     assert c.strip.shows > 0 and c.strip.unguarded == 0
+
+
+def test_brightness_never_reaches_zero():
+    """Feldbefund 2026-09-27: der Regler stand auf 0 — jeder Effekt malte
+    schwarz, der Strip wirkte tot, 'egal was man drueckt'. Aus ist Aus
+    (Power), die Helligkeit bleibt >= 1 — auch aus M5/Dashboard."""
+    c = fresh(FakeStrip(10))
+    c.owner = 'lichtwerk'
+    c.strip_warn_mode = False
+    wc.app.config['TESTING'] = True
+    cl = wc.app.test_client()
+    r = cl.post('/api/brightness', json={'brightness': 0}).get_json()
+    assert r['brightness'] == 1 and c.brightness == 1
+    src = (_ROOT / 'templates' / 'index.html').read_text()
+    assert 'id="brightness-slider" min="1"' in src

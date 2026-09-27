@@ -93,6 +93,8 @@ Lichtwerk-App und dB-Analyse (disco: Strip-Warn / Disco-Strip) steuerten den Str
 - `pio_strip.show_payload()` gab das Write-Ergebnis nicht zurück → `MultiStrip.show()` erkannte verlorene Frames nie.
 - **Geräte-Zuordnung ohne dmesg:** der Ringpuffer rotiert nach Tagen; der Rang-Rückfall zählte alle konfigurierten Pins [18, 21] und schrieb die GPIO-21-Kette auf ein nicht existierendes `/dev/leds1` (lief nur zufällig als „GPIO 18" auf leds0). Gerankt wird jetzt nur unter den in `config.txt` **aktiven** Overlays (`active_overlay_pins`).
 
+- **Helligkeit nie 0 (2026-09-27, Feldbefund „ich kann drücken was ich will, es ändert sich nichts“):** der Regler stand auf 0 — jeder Effekt malt dann schwarz, der Strip wirkt tot. `/api/brightness` klemmt auf ≥ 1, Regler in App und Dashboard-Karte starten bei 1; Aus bleibt Sache von Power. ⚠️ **Diagnose-Rezept „Strip reagiert nicht“:** (1) `/api/status` — power/brightness/owner; (2) `strace -e write -p <PID>` auf `/dev/leds0` (2400 B je Frame, Wert = Farbe × Helligkeit × LUT 0,39); (3) `pinctrl get 21` muss `a7 … PIO21` zeigen; (4) `for i in $(seq 400); do pinctrl lev 21; done | sort | uniq -c` — gemischt 0/1 = Pin sendet. Sind alle vier gut und der Strip bleibt dunkel, liegt es an Netzteil/Stecker/erstem Pixel, nicht am Code.
+
 Tests: `tests/test_strip_owner.py`, `tests/test_no_stale_pixels.py` (Sentinel-Probe über alle 13 Effekte + Lock-Probe), `tests/test_pio_strip.py`; alle Fixes mutationsgeprüft. Suite **292**.
 
 ## Key Commands

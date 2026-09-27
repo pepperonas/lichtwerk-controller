@@ -3095,7 +3095,9 @@ def _blocked_by_strip_warn():
 @app.route('/api/brightness', methods=['POST'])
 def set_brightness():
     data = request.get_json() or {}
-    brightness = max(0, min(255, int(data.get('brightness', 100))))
+    # >= 1: bei 0 malt jeder Effekt schwarz und der Strip wirkt tot (Feldbefund
+    # 2026-09-27). Ausschalten ist Sache von Power, nicht des Reglers.
+    brightness = max(1, min(255, int(data.get('brightness', 100))))
     if _blocked_by_strip_warn():
         # Entkopplung 2026-08-12: waehrend Iris/Strip-Warn den Strip
         # besitzt, wird der Nutzerwunsch NICHT live angewendet (er wuerde
